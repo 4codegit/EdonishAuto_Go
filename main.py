@@ -883,11 +883,14 @@ class EdonishAutoApp:
         )
         
         # Horizontal scroll wrapper for mobile (wide table support)
+        # On mobile, wrap the grid in a scrollable container for horizontal scrolling
         self.journal_grid_wrapper = Container(
             content=self.journal_grid_container,
-            scroll=ScrollMode.AUTO if self._is_mobile else None,
             expand=True,
         )
+        if self._is_mobile:
+            # Enable horizontal scrolling on mobile for the wide journal table
+            self.journal_grid_wrapper.scroll = ScrollMode.AUTO
 
         self.journal_page = Column(
             scroll=ScrollMode.AUTO,
@@ -966,12 +969,16 @@ class EdonishAutoApp:
                             ], alignment=MainAxisAlignment.START),
                             Container(height=8),
                             self.topics_grid_container,
-                        ], scroll=ScrollMode.AUTO if self._is_mobile else None),
+                        ]),
                     ),
                 ),
             ],
         )
         self.journal_page.padding = 20
+
+        # Add vertical scroll for mobile to handle all content
+        if self._is_mobile:
+            self.journal_page.scroll = ScrollMode.AUTO
 
     # ════════════════════════════════════════════════════════════════
     #  LOGS PAGE
@@ -1618,7 +1625,7 @@ class EdonishAutoApp:
             self._show_snackbar("Выберите конкретный класс для загрузки журнала!")
             return
 
-        if not subject_name or subject_name in ("", ):
+        if not subject_name or subject_name in ("", "Все предметы"):
             self._show_snackbar("Выберите предмет!")
             return
 
@@ -1675,6 +1682,10 @@ class EdonishAutoApp:
 
         self._log_message("Загрузка журнала...")
 
+        # Show loading indicator
+        self._loading_data = True
+        self.page.update()
+
         def load():
             try:
                 students = self.api.get_journal_students(
@@ -1687,11 +1698,23 @@ class EdonishAutoApp:
                     subject_id=subject_id,
                     quarter_property_id=qprop_id,
                 )
-                self._display_journal_grid(students, dates_data)
+                self.page.run_thread(lambda: self._display_journal_grid(students, dates_data))
             except Exception as e:
                 self._log_message(f"Ошибка загрузки журнала: {e}", "error")
+                self.page.run_thread(lambda: self._on_load_journal_error(str(e)))
+            finally:
+                self._loading_data = False
 
         threading.Thread(target=load, daemon=True).start()
+
+    def _on_load_journal_error(self, error_msg):
+        """Handle journal loading error."""
+        self._loading_data = False
+        self._show_snackbar(f"Ошибка: {error_msg}")
+        try:
+            self.page.update()
+        except Exception:
+            pass
 
     def _reload_journal(self):
         """Reload the journal using the stored params (after grade operations)."""
