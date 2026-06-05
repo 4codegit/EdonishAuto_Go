@@ -744,9 +744,13 @@ class EdonishAutoApp:
 
     def _build_journal_page(self):
         """Interactive journal page with editable grade grid, arrow-key navigation, and Delete support."""
+        # Adaptive widths for mobile/desktop
+        dropdown_width = None if self._is_mobile else 200
+        field_width = None if self._is_mobile else 600
+        
         self.journal_class_dropdown = Dropdown(
             label="Класс",
-            width=200,
+            width=dropdown_width,
             text_size=15,
             options=[dropdown.Option("Все классы")],
             value="Все классы",
@@ -754,7 +758,7 @@ class EdonishAutoApp:
         self.journal_class_dropdown.on_select = self._on_journal_class_change
         self.journal_subject_dropdown = Dropdown(
             label="Предмет",
-            width=250,
+            width=dropdown_width,
             text_size=15,
             options=[dropdown.Option("Все предметы")],
             value="Все предметы",
@@ -762,7 +766,7 @@ class EdonishAutoApp:
         )
         self.journal_quarter_dropdown = Dropdown(
             label="Четверть",
-            width=200,
+            width=dropdown_width,
             text_size=15,
             options=[dropdown.Option("Все четверти")],
             value="Все четверти",
@@ -815,7 +819,7 @@ class EdonishAutoApp:
             multiline=True,
             min_lines=4,
             max_lines=12,
-            width=600,
+            width=field_width,
             text_size=14,
             hint_text="Тема 1\nТема 2\nТема 3\n...",
         )
@@ -824,7 +828,7 @@ class EdonishAutoApp:
             multiline=True,
             min_lines=4,
             max_lines=12,
-            width=600,
+            width=field_width,
             text_size=14,
             hint_text="ДЗ для урока 1\nДЗ для урока 2\n...",
         )
@@ -879,8 +883,8 @@ class EdonishAutoApp:
         )
         
         # Horizontal scroll wrapper for mobile (wide table support)
-        self.journal_grid_wrapper = Row(
-            [self.journal_grid_container],
+        self.journal_grid_wrapper = Container(
+            content=self.journal_grid_container,
             scroll=ScrollMode.AUTO if self._is_mobile else None,
             expand=True,
         )
@@ -962,7 +966,7 @@ class EdonishAutoApp:
                             ], alignment=MainAxisAlignment.START),
                             Container(height=8),
                             self.topics_grid_container,
-                        ]),
+                        ], scroll=ScrollMode.AUTO if self._is_mobile else None),
                     ),
                 ),
             ],
@@ -2311,9 +2315,9 @@ class EdonishAutoApp:
     def _update_topics_display(self):
         """Build a table showing dates with their topics and homework."""
         if not self._dates_data:
-            self.topics_grid_container.content = Text(
-                "Нет данных о датах", size=14, color=ft.Colors.GREY_500
-            )
+            self.topics_grid_container.content = Column([
+                Text("Нет данных о датах", size=14, color=ft.Colors.GREY_500, text_align=TextAlign.CENTER),
+            ], horizontal_alignment=CrossAxisAlignment.CENTER)
             try:
                 self.page.update()
             except Exception:
@@ -2352,11 +2356,21 @@ class EdonishAutoApp:
         total = len(self._dates_data)
         stats = f"Всего дат: {total} | Без темы: {empty_topic_count} | С темой: {total - empty_topic_count}"
 
-        self.topics_grid_container.content = Column([
-            Text(stats, size=13, color=ft.Colors.GREY_600, weight=FontWeight.W_500),
-            Container(height=4),
-            Column(rows, scroll=ScrollMode.AUTO, spacing=2),
-        ], scroll=ScrollMode.AUTO)
+        # Mobile: wrap in scrollable container; Desktop: static
+        if self._is_mobile:
+            topics_content = Column([
+                Text(stats, size=13, color=ft.Colors.GREY_600, weight=FontWeight.W_500),
+                Container(height=4),
+                Column(rows, scroll=ScrollMode.AUTO, spacing=2, expand=True),
+            ], scroll=ScrollMode.AUTO, expand=True)
+        else:
+            topics_content = Column([
+                Text(stats, size=13, color=ft.Colors.GREY_600, weight=FontWeight.W_500),
+                Container(height=4),
+                Column(rows, scroll=ScrollMode.AUTO, spacing=2),
+            ], scroll=ScrollMode.AUTO)
+
+        self.topics_grid_container.content = topics_content
 
         try:
             self.page.update()
