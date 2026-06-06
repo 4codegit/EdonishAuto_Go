@@ -118,8 +118,11 @@ class EdonishAPI:
 
     @property
     def has_school_admin_rights(self) -> bool:
-        """Check if user has school_admin capabilities (granted to teachers)."""
-        # Teachers automatically get school_admin rights
+        """Check if user has school_admin capabilities (granted to teachers, classroom-teachers, or school_admins).
+        
+        Returns True if user has at least one of the required roles.
+        """
+        # Check if user has any of the required roles
         return self.role in ("teacher", "classroom-teacher", "school_admin")
 
     def _refresh_auth(self) -> bool:

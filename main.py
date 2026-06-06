@@ -422,20 +422,23 @@ class EdonishAutoApp:
         role = self._user_info.get('role', 'unknown')
         school_id = self.api.school_id
         admin_rights = "✅" if self.api.has_school_admin_rights else "❌"
+        roles_list = ", ".join(self._user_info.get('roles', [])) or "неизвестно"
         
         self.page.dialog = AlertDialog(
             title=Row([Icon(Icons.PERSON, color=ft.Colors.BLUE_600), Text(" Профиль", size=18, weight=FontWeight.W_600)], spacing=8),
             content=Column([
                 Text(name if name else "Неизвестно", size=18, weight=FontWeight.W_700),
                 Text(f"Роль: {role}", size=14, color=ft.Colors.GREY_700),
-                Text(f"Школа ID: {school_id}", size=14, color=ft.Colors.GREY_700),
                 Text(f"Права админа: {admin_rights}", size=14, color=ft.Colors.GREEN_700 if self.api.has_school_admin_rights else ft.Colors.RED_600),
+                Text(f"Школа ID: {school_id}", size=14, color=ft.Colors.GREY_700),
+                Text(f"Все роли: {roles_list}", size=13, color=ft.Colors.GREY_500),
             ], spacing=10),
             actions=[
                 TextButton("OK", on_click=lambda _: self.page.dialog.close()),
             ],
         )
         self.page.dialog.open = True
+        self._log_message(f"Профиль: {name}, роль={role}, admin={admin_rights}, school={school_id}")
         self.page.update()
 
     def _on_nav_change(self, e):
@@ -1575,9 +1578,15 @@ class EdonishAutoApp:
         threading.Thread(target=do_login, daemon=True).start()
 
     def _on_login_success(self, user_info):
-        self._logged_in = True
+        """Handle successful login."""
         self._user_info = user_info
         self._build_dashboard_view(user_info)
+        # Log user info for debugging
+        name = f"{user_info.get('last_name', '')} {user_info.get('first_name', '')}".strip()
+        role = user_info.get('role', 'unknown')
+        roles_list = user_info.get('roles', [])
+        self._log_message(f"✅ Успешный вход: {name}, роль={role}, роли={roles_list}, admin_rights={self.api.has_school_admin_rights}")
+        self._log_message(f"  School ID: {self.api.school_id}, User Info: {user_info}")
         self._load_initial_data()
 
     def _on_login_error(self, error_msg):
@@ -2675,9 +2684,12 @@ class EdonishAutoApp:
                 if existing_mark_id:
                     self._log_message(f"  🗑️ Удаление старой оценки (ID: {existing_mark_id})")
                     try:
-                        self.api.delete_mark(mark_id=existing_mark_id)
+                        result = self.api.delete_mark(mark_id=existing_mark_id)
+                        if result and isinstance(result, dict) and result.get("error"):
+                            self._log_message(f"  ⚠️ Ошибка удаления (пропускаем): {result.get('error')}", "warning")
                     except Exception as e:
-                        self._log_message(f"  ⚠️ Ошибка удаления: {e}", "warning")
+                        # Ignore deletion errors - mark might already be deleted or locked
+                        self._log_message(f"  ⚠️ Ошибка удаления (пропускаем): {e}", "warning")
                 
                 self._log_message(f"  ➕ Создание новой оценки: student={data['student_id']}, date={data['date_id']}, grade={grade}")
                 result = self.api.create_mark(
