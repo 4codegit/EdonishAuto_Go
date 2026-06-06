@@ -303,10 +303,8 @@ class EdonishAutoApp:
 
     def _build_dashboard_view(self, user_info):
         """Build main dashboard with bottom navigation like Telegram Mobile."""
-        name = f"{user_info.get('last_name', '')} {user_info.get('first_name', '')}"
-        school_info = f"Школа ID: {self.api.school_id} | {self.api.role}"
-        if self.api.has_school_admin_rights:
-            school_info += " (teacher+admin)"
+        name = f"{user_info.get('last_name', '')} {user_info.get('first_name', '')}".strip()
+        self._user_info = user_info
         
         # Always use mobile-style layout (bottom nav)
         self._is_mobile = True
@@ -339,7 +337,7 @@ class EdonishAutoApp:
                 IconButton(
                     icon=Icons.PERSON,
                     tooltip="Профиль",
-                    on_click=lambda _: self._show_user_info(name, school_info),
+                    on_click=self._show_user_info,
                 ),
                 IconButton(
                     icon=Icons.DARK_MODE_OUTLINED,
@@ -356,6 +354,20 @@ class EdonishAutoApp:
 
         self.page.clean()
         self.page.appbar = appbar
+        
+        # Set dark theme colors if needed
+        if self.page.theme_mode == ft.ThemeMode.DARK:
+            self.page.theme = ft.Theme(
+                color_scheme=ft.ColorScheme(
+                    primary=ft.Colors.AMBER_500,
+                    onPrimary=ft.Colors.BLACK,
+                    secondary=ft.Colors.ORANGE_400,
+                    onSecondary=ft.Colors.BLACK,
+                    surface=ft.Colors.GREY_900,
+                    onSurface=ft.Colors.WHITE,
+                    background=ft.Colors.GREY_950,
+                )
+            )
         
         # Bottom navigation bar (Telegram-style) - always at bottom
         self.nav_bar = NavigationBar(
@@ -404,14 +416,21 @@ class EdonishAutoApp:
         self.page.on_keyboard_event = self._on_dashboard_keyboard
         self.page.update()
 
-    def _show_user_info(self, name: str, school_info: str):
+    def _show_user_info(self, e=None):
         """Show user info dialog."""
+        name = f"{self._user_info.get('last_name', '')} {self._user_info.get('first_name', '')}".strip()
+        role = self._user_info.get('role', 'unknown')
+        school_id = self.api.school_id
+        admin_rights = "✅" if self.api.has_school_admin_rights else "❌"
+        
         self.page.dialog = AlertDialog(
-            title=Text("Профиль"),
+            title=Row([Icon(Icons.PERSON, color=ft.Colors.BLUE_600), Text(" Профиль", size=18, weight=FontWeight.W_600)], spacing=8),
             content=Column([
-                Text(name, size=16, weight=FontWeight.W_600),
-                Text(school_info, size=13, color=ft.Colors.GREY_600),
-            ], spacing=8),
+                Text(name if name else "Неизвестно", size=18, weight=FontWeight.W_700),
+                Text(f"Роль: {role}", size=14, color=ft.Colors.GREY_700),
+                Text(f"Школа ID: {school_id}", size=14, color=ft.Colors.GREY_700),
+                Text(f"Права админа: {admin_rights}", size=14, color=ft.Colors.GREEN_700 if self.api.has_school_admin_rights else ft.Colors.RED_600),
+            ], spacing=10),
             actions=[
                 TextButton("OK", on_click=lambda _: self.page.dialog.close()),
             ],
@@ -426,10 +445,34 @@ class EdonishAutoApp:
         self.page.update()
 
     def _toggle_theme(self, e=None):
+        """Toggle between light and dark theme with amber/orange accent colors."""
         if self.page.theme_mode == ft.ThemeMode.DARK:
             self.page.theme_mode = ft.ThemeMode.LIGHT
+            self.page.theme = ft.Theme()
         else:
             self.page.theme_mode = ft.ThemeMode.DARK
+            # Dark theme with amber/orange accent (warm night colors)
+            self.page.theme = ft.Theme(
+                color_scheme=ft.ColorScheme(
+                    primary=ft.Colors.AMBER_500,
+                    onPrimary=ft.Colors.BLACK,
+                    primaryContainer=ft.Colors.AMBER_200,
+                    onPrimaryContainer=ft.Colors.BLACK,
+                    secondary=ft.Colors.ORANGE_400,
+                    onSecondary=ft.Colors.BLACK,
+                    secondaryContainer=ft.Colors.ORANGE_200,
+                    onSecondaryContainer=ft.Colors.BLACK,
+                    tertiary=ft.Colors.GOLD_400 if hasattr(ft.Colors, 'GOLD_400') else ft.Colors.AMBER_400,
+                    surface=ft.Colors.GREY_900,
+                    onSurface=ft.Colors.WHITE,
+                    surfaceVariant=ft.Colors.GREY_800,
+                    onSurfaceVariant=ft.Colors.GREY_200,
+                    background=ft.Colors.GREY_950,
+                    onBackground=ft.Colors.WHITE,
+                    error=ft.Colors.RED_400,
+                    onError=ft.Colors.BLACK,
+                )
+            )
         self.page.update()
 
     # ════════════════════════════════════════════════════════════════
@@ -750,7 +793,6 @@ class EdonishAutoApp:
             ),
             on_click=lambda _: self._on_save_journal(),
             tooltip="Ctrl+S",
-            disabled=True,
         )
 
         self.journal_clear_btn = OutlinedButton(
@@ -764,7 +806,6 @@ class EdonishAutoApp:
             ),
             on_click=lambda _: self._on_clear_all_grades(),
             tooltip="Удалить все оценки в журнале",
-            visible=False,
         )
 
         self.journal_student_count = Text("", size=13, color=ft.Colors.GREY_500)
@@ -818,13 +859,19 @@ class EdonishAutoApp:
         self._dates_data = []  # Store dates data for topics
 
         # Placeholder text when no journal loaded
-        self.journal_placeholder = Text(
-            "Выберите класс, предмет и четверть для просмотра журнала\n\n"
-            "Стрелки — навигация по ячейкам | Ввод цифры — поставить оценку\n"
-            "Delete — удалить оценку из ячейки",
-            size=14,
-            color=ft.Colors.GREY_600,
-            text_align=TextAlign.CENTER,
+        self.journal_placeholder = Column(
+            [
+                Icon(Icons.MENU_BOOK, size=64, color=ft.Colors.GREY_300),
+                Container(height=16),
+                Text("Выберите класс, предмет и четверть", size=16, weight=FontWeight.W_600),
+                Text("для просмотра журнала", size=14, color=ft.Colors.GREY_600),
+                Container(height=24),
+                Text("Стрелки — навигация по ячейкам", size=13, color=ft.Colors.GREY_500),
+                Text("Ввод цифры — поставить оценку", size=13, color=ft.Colors.GREY_500),
+                Text("Delete — удалить оценку", size=13, color=ft.Colors.GREY_500),
+            ],
+            horizontal_alignment=CrossAxisAlignment.CENTER,
+            spacing=8,
         )
 
         # The grid container — will be populated by _display_journal_grid
@@ -835,9 +882,10 @@ class EdonishAutoApp:
                 scroll=ScrollMode.AUTO,
                 expand=True,
                 horizontal_alignment=CrossAxisAlignment.CENTER,
+                spacing=12,
             ),
         )
-        
+
         # Horizontal scroll wrapper for mobile (wide table support)
         # On mobile, wrap the grid in a scrollable container for horizontal scrolling
         self.journal_grid_wrapper = Container(
@@ -896,12 +944,6 @@ class EdonishAutoApp:
         )
         self.journal_page.padding = 20 if not self._is_mobile else 8
         
-        # On mobile, hide the topics section to save space and improve UX
-        # Users can access it from desktop version if needed
-        if self._is_mobile:
-            # Remove topics section from mobile view for better UX
-            pass  # Already not added to controls above
-
     # ════════════════════════════════════════════════════════════════
     #  LOGS PAGE
     # ════════════════════════════════════════════════════════════════
@@ -1062,14 +1104,85 @@ class EdonishAutoApp:
     def _on_topics_load(self):
         """Load topics for selected class/subject/quarter."""
         class_name = self.topics_class_dropdown.value
+        subject_name = self.topics_subject_dropdown.value
+        quarter_name = self.topics_quarter_dropdown.value
+        
         if not class_name or class_name == "Все классы":
             self._show_snackbar("Выберите класс!")
             return
-        self.topics_list_container.content = ProgressRing()
+        if not subject_name or subject_name == "Все предметы":
+            self._show_snackbar("Выберите предмет!")
+            return
+
+        self.topics_list_container.content = Column([
+            ProgressRing(),
+            Container(height=16),
+            Text("Загрузка тем...", size=14, color=ft.Colors.BLUE_600),
+        ], horizontal_alignment=CrossAxisAlignment.CENTER)
         self.page.update()
         self._log_message("Загрузка тем...")
-        # Reuse journal dates loading logic
-        self._on_load_journal()
+
+        # Need to load journal data first to get dates
+        # Find group_id, subject_id, qprop_id
+        group_id = None
+        subject_id = None
+        qprop_id = None
+        
+        for g in self.groups_data:
+            if g["name"] == class_name:
+                group_id = g["id"]
+                break
+
+        for s in self.teacher_subjects:
+            if s["subjectName"] == subject_name:
+                subject_id = s["subjectId"]
+                break
+        
+        # Find quarter ID
+        for g in (self.journal_options or {}).get("groups", []):
+            gname = f"{g.get('number', '')}{g.get('name', '')}"
+            if gname == class_name:
+                for q in g.get("quarters", []):
+                    if q.get("name") == quarter_name:
+                        qprop_id = q["id"]
+                        break
+                break
+
+        if not qprop_id:
+            for q in self.quarters_data:
+                if q.get("name") == quarter_name:
+                    qprop_id = q["qpropId"]
+                    break
+        
+        if not all([group_id, subject_id, qprop_id]):
+            self._show_snackbar("Не найдены данные для загрузки!")
+            self.topics_list_container.content = Text("Ошибка загрузки", size=14, color=ft.Colors.RED_600)
+            self.page.update()
+            return
+
+        def load():
+            try:
+                dates_data = self.api.get_journal_dates(
+                    group_id=group_id,
+                    subject_id=subject_id,
+                    quarter_property_id=qprop_id,
+                )
+                self.page.run_thread(lambda: self._display_topics_list(dates_data))
+            except Exception as e:
+                self._log_message(f"Ошибка загрузки тем: {e}", "error")
+                self.page.run_thread(lambda: self._on_topics_load_error(str(e)))
+        
+        threading.Thread(target=load, daemon=True).start()
+
+    def _on_topics_load_error(self, error_msg):
+        """Handle topics loading error."""
+        self.topics_list_container.content = Column([
+            Icon(Icons.ERROR, size=48, color=ft.Colors.RED_500),
+            Container(height=12),
+            Text("Ошибка загрузки", size=16, weight=FontWeight.W_600),
+            Text(error_msg, size=13, color=ft.Colors.GREY_600),
+        ], horizontal_alignment=CrossAxisAlignment.CENTER)
+        self.page.update()
 
     def _on_topics_fill(self):
         """Fill topics from input."""
@@ -1110,7 +1223,7 @@ class EdonishAutoApp:
             return
         empty = [d for d in self._dates_data if not d.get("homeWork", "").strip()]
         if not empty:
-            self._show_snackbar("Все даты имеют ДЗ!")
+            self._show_snackbar("Все даты уже имеют ДЗ!")
             return
         to_fill = min(len(hws), len(empty))
         self._log_message(f"Заполнение {to_fill} ДЗ...")
@@ -1126,6 +1239,102 @@ class EdonishAutoApp:
             self._log_message(f"✅ Заполнено: {filled}/{to_fill}")
             self._on_topics_load()
         threading.Thread(target=do_fill, daemon=True).start()
+
+    def _display_topics_list(self, dates_data):
+        """Display topics and homework in a nice list."""
+        if not dates_data or not dates_data[0].get("days"):
+            self.topics_list_container.content = Column([
+                Icon(Icons.INFO, size=48, color=ft.Colors.GREY_400),
+                Container(height=12),
+                Text("Нет данных о датах", size=16, color=ft.Colors.GREY_600),
+            ], horizontal_alignment=CrossAxisAlignment.CENTER)
+            self.page.update()
+            return
+
+        dates = dates_data[0]["days"]
+        self._dates_data = dates  # Store for fill operations
+        
+        rows = []
+        empty_topic_count = 0
+        empty_hw_count = 0
+        
+        for d in dates:
+            date_str = d.get("assignmentDate", "")[5:]  # MM-DD
+            weekday = d.get("weekdayShortName", "")
+            topic = d.get("topic", "")
+            hw = d.get("homeWork", "")
+            
+            if not topic or not topic.strip():
+                empty_topic_count += 1
+                topic_text = "⚪ Пусто"
+                topic_color = ft.Colors.RED_400
+            else:
+                topic_text = topic[:50] + "..." if len(topic) > 50 else topic
+                topic_color = ft.Colors.BLACK87
+            
+            if not hw or not hw.strip():
+                empty_hw_count += 1
+                hw_text = "⚪ Пусто"
+                hw_color = ft.Colors.ORANGE_400
+            else:
+                hw_text = hw[:40] + "..." if len(hw) > 40 else hw
+                hw_color = ft.Colors.BLACK87
+            
+            rows.append(Container(
+                content=Column([
+                    Row([
+                        Text(f"{date_str} ({weekday})", size=13, weight=FontWeight.W_600, color=ft.Colors.BLUE_700),
+                        Container(expand=True),
+                    ], spacing=4),
+                    Row([
+                        Icon(Icons.NOTES, size=14, color=ft.Colors.PURPLE_600),
+                        Text(" ", size=0),
+                        Text(topic_text, size=13, color=topic_color, max_lines=1),
+                    ], spacing=4),
+                    Row([
+                        Icon(Icons.HOME_WORK, size=14, color=ft.Colors.ORANGE_600),
+                        Text(" ", size=0),
+                        Text(hw_text, size=13, color=hw_color, max_lines=1),
+                    ], spacing=4),
+                ], spacing=4),
+                padding=ft.controls.Padding.all(10),
+                bgcolor=ft.Colors.GREY_50,
+                border=Border(
+                    bottom=BorderSide(1, ft.Colors.GREY_200)
+                ),
+                border_radius=BorderRadius.all(8),
+            ))
+        
+        total = len(dates)
+        stats = f"Всего дат: {total} | Тем пустых: {empty_topic_count} | ДЗ пустых: {empty_hw_count}"
+        
+        self.topics_list_container.content = Column([
+            Row([
+                Icon(Icons.DESCRIPTION, size=22, color=ft.Colors.BLUE_600),
+                Text(f" Список тем и ДЗ", size=16, weight=FontWeight.W_600),
+                Container(expand=True),
+                Text(stats, size=12, color=ft.Colors.GREY_600),
+            ], spacing=8),
+            Container(height=12),
+            Container(
+                content=Column(rows, scroll=ScrollMode.AUTO, spacing=8, expand=True),
+                expand=True,
+            ),
+            Container(height=12),
+            Row([
+                FilledButton(
+                    content=Row([Icon(Icons.EDIT_NOTE, size=16), Text("Заполнить темы", size=14)]),
+                    on_click=lambda _: self._on_topics_fill(),
+                ),
+                Container(width=12),
+                OutlinedButton(
+                    content=Row([Icon(Icons.HOME_WORK, size=16), Text("Заполнить ДЗ", size=14)]),
+                    on_click=lambda _: self._on_hw_fill(),
+                ),
+            ], spacing=0),
+        ], spacing=8, expand=True)
+        
+        self.page.update()
 
     # ════════════════════════════════════════════════════════════════
     #  ADMIN PAGE
@@ -1367,6 +1576,7 @@ class EdonishAutoApp:
 
     def _on_login_success(self, user_info):
         self._logged_in = True
+        self._user_info = user_info
         self._build_dashboard_view(user_info)
         self._load_initial_data()
 
@@ -2041,17 +2251,18 @@ class EdonishAutoApp:
                 horizontal_alignment=CrossAxisAlignment.CENTER,
             )
             self._journal_loaded = False
-            self.journal_clear_btn.visible = False
             self.journal_save_btn.disabled = True
+            self.journal_clear_btn.disabled = True
+            self.journal_student_count.value = ""
             try:
-                self.page.run_thread(lambda: self.page.update())
+                self.page.run_thread(self._safe_update)
             except Exception:
                 pass
             return
 
         self.journal_student_count.value = f"{len(students)} учеников | {len(dates)} дат"
-        self.journal_clear_btn.visible = True
         self.journal_save_btn.disabled = False
+        self.journal_clear_btn.disabled = False
         self._journal_loaded = True
 
         self._grid_rows = len(students)
