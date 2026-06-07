@@ -147,7 +147,7 @@ class EdonishAutoApp:
         self._journal_loaded = False
         self._current_journal_params = {}
         self._student_quarter_data = {}  # row_idx -> {student_id, qprop_id, subject_id, curriculum_property_id, quarter_mark_id, quarter_mark_value}
-        self._is_mobile = False  # Will detect in _build_dashboard_view
+        self._is_mobile = False  # Will detect in _build_dashboard_view based on page width
 
         # Page config
         self.page.title = f"{APP_NAME} v{APP_VERSION}"
@@ -319,12 +319,16 @@ class EdonishAutoApp:
     # ════════════════════════════════════════════════════════════════
 
     def _build_dashboard_view(self, user_info):
-        """Build main dashboard with bottom navigation like Telegram Mobile."""
+        """Build main dashboard with navigation — adapts to desktop/mobile."""
         name = f"{user_info.get('last_name', '')} {user_info.get('first_name', '')}".strip()
         self._user_info = user_info
         
-        # Always use mobile-style layout (bottom nav)
-        self._is_mobile = True
+        # Detect mobile vs desktop based on page width
+        try:
+            page_width = self.page.window.width if hasattr(self.page, 'window') else 800
+            self._is_mobile = page_width < 800
+        except Exception:
+            self._is_mobile = False
         
         # Build pages first
         self._build_auto_grade_page()
@@ -346,17 +350,26 @@ class EdonishAutoApp:
         # Build user avatar with initials
         self._user_avatar = self._make_user_avatar(user_info)
 
-        # Build role badge
+        # Build role badge  
         self._role_badge = self._make_role_badge()
+        
+        # Get role info for display
+        current_role = self.api.role or "teacher"
+        role_info = ROLE_DISPLAY.get(current_role, {"label": current_role, "icon": Icons.PERSON, "color": ft.Colors.GREY_600})
 
-        # AppBar - with user avatar and role info
+        # AppBar - with user avatar, name and role info (visible on both desktop and mobile)
         appbar = AppBar(
             leading=self._user_avatar,
             leading_width=50,
             title=Column([
-                Text(f"{APP_NAME}", size=14, weight=FontWeight.W_600),
+                Row([
+                    Text(f"{APP_NAME}", size=14, weight=FontWeight.W_600),
+                    Container(width=8),
+                    Icon(role_info.get("icon", Icons.PERSON), size=14, color=role_info["color"]),
+                    Text(role_info["label"], size=12, color=role_info["color"], weight=FontWeight.W_600),
+                ], spacing=4, alignment=ft.MainAxisAlignment.START),
                 self._role_badge,
-            ], spacing=2, alignment=ft.MainAxisAlignment.CENTER),
+            ], spacing=1, alignment=ft.MainAxisAlignment.CENTER),
             center_title=False,
             bgcolor=ft.Colors.SURFACE,
             actions=[
@@ -496,10 +509,6 @@ class EdonishAutoApp:
         available = self.api.available_role_names
         current_role = self.api.role
         
-        if len(available) <= 1:
-            self._show_snackbar("У вас только одна роль — переключение недоступно")
-            return
-        
         # Build role choice rows
         role_rows = []
         for rname in available:
@@ -540,6 +549,24 @@ class EdonishAutoApp:
                     border=Border.all(1, ft.Colors.BLUE_200),
                 ))
         
+        # If user has no grade-modify roles, show a warning
+        can_modify_any = any(r in GRADE_MODIFY_ROLES for r in available)
+        warning = []
+        if not can_modify_any:
+            warning = [
+                Container(height=8),
+                Container(
+                    content=Row([
+                        Icon(Icons.WARNING_AMBER_ROUNDED, size=16, color=ft.Colors.ORANGE_700),
+                        Text("У вас нет ролей для изменения оценок. Обратитесь к администратору школы.",
+                             size=12, color=ft.Colors.ORANGE_700),
+                    ], spacing=6),
+                    padding=8,
+                    bgcolor=ft.Colors.ORANGE_50,
+                    border_radius=8,
+                ),
+            ]
+        
         self.page.dialog = AlertDialog(
             title=Row([
                 Icon(Icons.SWAP_HORIZ, color=ft.Colors.BLUE_600),
@@ -550,17 +577,18 @@ class EdonishAutoApp:
                      size=12, color=ft.Colors.GREY_600),
                 Container(height=12),
                 *role_rows,
+                *warning,
                 Container(height=8),
                 Divider(),
                 Container(height=4),
                 Row([
                     Icon(Icons.INFO_OUTLINED, size=14, color=ft.Colors.GREY_500),
-                    Text("Оценки можно менять с ролями: учитель, кл. руководитель, админ",
+                    Text("Оценки можно менять с ролями: учитель, кл. руководитель, админ школы",
                          size=11, color=ft.Colors.GREY_500),
                 ], spacing=4),
             ], spacing=4, scroll=ScrollMode.AUTO),
             actions=[
-                TextButton("Отмена", on_click=lambda _: self.page.dialog.close()),
+                TextButton("Закрыть", on_click=lambda _: self.page.dialog.close()),
             ],
         )
         self.page.dialog.open = True
@@ -577,13 +605,22 @@ class EdonishAutoApp:
             self._user_avatar = self._make_user_avatar(self._user_info)
             self._role_badge = self._make_role_badge()
             
-            # Update AppBar
+            # Get updated role info
+            current_role = self.api.role or "teacher"
+            role_info_new = ROLE_DISPLAY.get(current_role, {"label": current_role, "icon": Icons.PERSON, "color": ft.Colors.GREY_600})
+            
+            # Update AppBar with new role
             if self.page.appbar:
                 self.page.appbar.leading = self._user_avatar
                 self.page.appbar.title = Column([
-                    Text(f"{APP_NAME}", size=14, weight=FontWeight.W_600),
+                    Row([
+                        Text(f"{APP_NAME}", size=14, weight=FontWeight.W_600),
+                        Container(width=8),
+                        Icon(role_info_new.get("icon", Icons.PERSON), size=14, color=role_info_new["color"]),
+                        Text(role_info_new["label"], size=12, color=role_info_new["color"], weight=FontWeight.W_600),
+                    ], spacing=4, alignment=ft.MainAxisAlignment.START),
                     self._role_badge,
-                ], spacing=2, alignment=ft.MainAxisAlignment.CENTER)
+                ], spacing=1, alignment=ft.MainAxisAlignment.CENTER)
             
             # Close dialog and reload data for new role
             if self.page.dialog:
@@ -768,13 +805,6 @@ class EdonishAutoApp:
             value=str(MAX_GRADE),
             keyboard_type=ft.KeyboardType.NUMBER,
         )
-        self.workers_field = TextField(
-            label="Воркеры",
-            width=field_width,
-            text_size=16,
-            value=str(DEFAULT_WORKERS),
-            keyboard_type=ft.KeyboardType.NUMBER,
-        )
         self.fill_empty_check = Checkbox(
             label="Только пустые ячейки",
             value=True,
@@ -808,7 +838,7 @@ class EdonishAutoApp:
                         ], spacing=10),
                         Container(height=16),
                         Row([
-                            Column([self.class_dropdown, Container(height=12), self.quarter_dropdown, Container(height=12), self.workers_field]),
+                            Column([self.class_dropdown, Container(height=12), self.quarter_dropdown]),
                             Container(width=24),
                             Column([self.subject_dropdown, Container(height=12),
                                 Row([self.min_grade_field, Text("—", size=20, weight=FontWeight.BOLD), self.max_grade_field], alignment=MainAxisAlignment.START, spacing=8),
@@ -1155,15 +1185,13 @@ class EdonishAutoApp:
             ),
         )
 
-        # Horizontal scroll wrapper for mobile (wide table support)
-        # On mobile, wrap the grid in a scrollable container for horizontal scrolling
-        self.journal_grid_wrapper = Container(
-            content=self.journal_grid_container,
+        # Horizontal scroll wrapper for the wide journal table
+        # Use a Row with scroll so the table can be scrolled horizontally on any screen
+        self.journal_grid_wrapper = Row(
+            [self.journal_grid_container],
+            scroll=ScrollMode.AUTO,
             expand=True,
         )
-        if self._is_mobile:
-            # Enable horizontal scrolling on mobile for the wide journal table
-            self.journal_grid_wrapper.scroll = ScrollMode.AUTO
 
         self.journal_page = Column(
             scroll=ScrollMode.AUTO,
@@ -2363,7 +2391,7 @@ class EdonishAutoApp:
         self.progress_label.value = "Заполнение..."
         self.page.update()
 
-        num_workers = int(self.workers_field.value or DEFAULT_WORKERS)
+        num_workers = DEFAULT_WORKERS
 
         def run():
             try:
