@@ -168,6 +168,33 @@ class EdonishAPI:
         logger.warning(f"Role '{role_name}' not found in available roles: {[r.get('name') for r in self._roles_raw]}")
         return False
 
+    def force_role(self, role_name: str) -> bool:
+        """Force-switch to ANY role, even if not in the user's available roles.
+        
+        This allows users to artificially select roles like school_admin to access
+        admin features. The API prefix is set based on the role, which determines
+        which endpoints are called.
+        
+        Returns True always (all roles are valid for force-switch).
+        """
+        self.role = role_name
+        self.role_prefix = API_PREFIXES.get(role_name, "/teacher/v1")
+        logger.info(
+            f"Force-switched role to: {role_name} (prefix: {self.role_prefix}, "
+            f"school: {self.school_id}) [forced, not in API roles]"
+        )
+        return True
+
+    @property
+    def available_role_names(self) -> List[str]:
+        """Return list of all role names available to the user."""
+        return [r.get("name", "unknown") for r in self.all_roles]
+
+    @property
+    def all_possible_roles(self) -> List[str]:
+        """Return all possible role names that the app supports."""
+        return list(API_PREFIXES.keys())
+
     @property
     def has_school_admin_rights(self) -> bool:
         """Check if user has school_admin capabilities.

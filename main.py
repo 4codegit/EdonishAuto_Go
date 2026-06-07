@@ -505,24 +505,44 @@ class EdonishAutoApp:
         )
 
     def _show_role_switcher(self, e=None):
-        """Show dialog to switch between available roles."""
-        available = self.api.available_role_names
+        """Show dialog to switch between all possible roles (including forced/artificial ones)."""
+        available = set(self.api.available_role_names)
         current_role = self.api.role
+        all_roles = self.api.all_possible_roles
         
-        # Build role choice rows
+        # Build role choice rows — show ALL roles, mark which are from API vs forced
         role_rows = []
-        for rname in available:
+        for rname in all_roles:
             role_info = ROLE_DISPLAY.get(rname, {"label": rname, "icon": Icons.PERSON, "color": ft.Colors.GREY_600})
             is_current = rname == current_role
+            is_owned = rname in available  # Role from API (user actually has it)
             can_modify = rname in GRADE_MODIFY_ROLES
+            
+            # Badge: own role vs forced
+            if is_owned:
+                badge = Container(
+                    content=Text("ваша", size=9, color=ft.Colors.GREEN_700),
+                    bgcolor=ft.Colors.GREEN_50,
+                    padding=ft.padding.symmetric(4, 6),
+                    border_radius=4,
+                )
+            else:
+                badge = Container(
+                    content=Text("выбрать", size=9, color=ft.Colors.ORANGE_700),
+                    bgcolor=ft.Colors.ORANGE_50,
+                    padding=ft.padding.symmetric(4, 6),
+                    border_radius=4,
+                )
             
             row = Row([
                 Icon(role_info["icon"], size=20, color=role_info["color"]),
                 Text(role_info["label"], size=15, weight=FontWeight.W_700 if is_current else FontWeight.W_400),
-                Container(width=8),
+                Container(width=4),
+                badge,
+                Container(expand=True),
                 Icon(Icons.RADIO_BUTTON_CHECKED if is_current else Icons.RADIO_BUTTON_UNCHECKED,
                       size=18, color=ft.Colors.BLUE_600 if is_current else ft.Colors.GREY_400),
-                Container(expand=True),
+                Container(width=4),
                 Icon(Icons.EDIT if can_modify else Icons.LOCK, size=14,
                      color=ft.Colors.GREEN_600 if can_modify else ft.Colors.GREY_400),
                 Text("оценки" if can_modify else "чтение", size=11,
@@ -530,12 +550,12 @@ class EdonishAutoApp:
             ], spacing=6)
             
             if not is_current:
-                # Make it clickable to switch
+                # Make it clickable to switch (both owned and forced)
                 row_container = Container(
                     content=row,
                     padding=8,
                     border_radius=8,
-                    on_click=lambda _, rn=rname: self._on_switch_role(rn),
+                    on_click=lambda _, rn=rname, owned=is_owned: self._on_switch_role(rn, forced=not owned),
                     ink=True,
                 )
                 role_rows.append(row_container)
@@ -549,35 +569,16 @@ class EdonishAutoApp:
                     border=Border.all(1, ft.Colors.BLUE_200),
                 ))
         
-        # If user has no grade-modify roles, show a warning
-        can_modify_any = any(r in GRADE_MODIFY_ROLES for r in available)
-        warning = []
-        if not can_modify_any:
-            warning = [
-                Container(height=8),
-                Container(
-                    content=Row([
-                        Icon(Icons.WARNING_AMBER_ROUNDED, size=16, color=ft.Colors.ORANGE_700),
-                        Text("У вас нет ролей для изменения оценок. Обратитесь к администратору школы.",
-                             size=12, color=ft.Colors.ORANGE_700),
-                    ], spacing=6),
-                    padding=8,
-                    bgcolor=ft.Colors.ORANGE_50,
-                    border_radius=8,
-                ),
-            ]
-        
         self.page.dialog = AlertDialog(
             title=Row([
                 Icon(Icons.SWAP_HORIZ, color=ft.Colors.BLUE_600),
-                Text("Сменить роль", size=18, weight=FontWeight.W_600),
+                Text("Выбрать роль", size=18, weight=FontWeight.W_600),
             ], spacing=8),
             content=Column([
-                Text("Текущая роль выделена синим. Нажмите на другую роль чтобы переключиться.",
+                Text("Выберите любую роль. Роли с меткой «ваша» — ваши по API, «выбрать» — можно включить искусственно.",
                      size=12, color=ft.Colors.GREY_600),
                 Container(height=12),
                 *role_rows,
-                *warning,
                 Container(height=8),
                 Divider(),
                 Container(height=4),
@@ -594,12 +595,20 @@ class EdonishAutoApp:
         self.page.dialog.open = True
         self.page.update()
 
-    def _on_switch_role(self, role_name: str):
-        """Switch to a different role and update the UI."""
-        success = self.api.switch_role(role_name)
+    def _on_switch_role(self, role_name: str, forced: bool = False):
+        """Switch to a different role and update the UI.
+        
+        If forced=True, the role is not in the user's API roles and will be set artificially.
+        """
+        if forced:
+            success = self.api.force_role(role_name)
+        else:
+            success = self.api.switch_role(role_name)
+            
         if success:
             role_info = ROLE_DISPLAY.get(role_name, {"label": role_name})
-            self._log_message(f"Роль переключена на: {role_info['label']} ({role_name})")
+            mode_text = " (искусственно)" if forced else ""
+            self._log_message(f"Роль переключена на: {role_info['label']} ({role_name}){mode_text}")
             
             # Update the avatar and badge
             self._user_avatar = self._make_user_avatar(self._user_info)
@@ -626,7 +635,12 @@ class EdonishAutoApp:
             if self.page.dialog:
                 self.page.dialog.open = False
             
-            self._show_snackbar(f"Роль: {role_info['label']}")
+            self._show_snackbar(f"Роль: {role_info['label']}{mode_text}")
+            
+            # Rebuild admin page with new role visibility
+            self._build_admin_page()
+            # Update the pages list (admin_page might have changed)
+            self.pages[3] = self.admin_page
             
             # Reload initial data (journal options may differ per role)
             self._load_initial_data()
@@ -1749,11 +1763,6 @@ class EdonishAutoApp:
                             Text("Просмотр данных", size=16, weight=FontWeight.W_600),
                             Container(height=8),
                             Row([
-                                OutlinedButton(
-                                    content=Row([Icon(Icons.CALENDAR_MONTH, size=16), Text("Четверти", size=14)]),
-                                    on_click=lambda _: self._on_admin_view_quarters(),
-                                ),
-                                Container(width=12),
                                 OutlinedButton(
                                     content=Row([Icon(Icons.GROUP, size=16), Text("Классы", size=14)]),
                                     on_click=lambda _: self._on_admin_view_groups(),
