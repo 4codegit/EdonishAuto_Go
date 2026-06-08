@@ -146,7 +146,7 @@ class EdonishAutoApp:
         self._grid_cols = 0
         self._journal_loaded = False
         self._current_journal_params = {}
-        self._student_quarter_data = {}  # row_idx -> {student_id, qprop_id, subject_id, curriculum_property_id, quarter_mark_id, quarter_mark_value}
+        self._student_quarter_data = {}  # row_idx -> {student_id, qprop_id, subject_id, curriculum_property_id, quarter_mark_id, quarter_mark_value, semester_property_id, year_property_id, semester_mark_value, year_mark_value, quarter_name}
         self._is_mobile = False  # Will detect in _build_dashboard_view based on page width
 
         # Page config
@@ -2480,6 +2480,7 @@ class EdonishAutoApp:
             "subject_id": subject_id,
             "qprop_id": qprop_id,
             "curriculum_property_id": curriculum_property_id,
+            "quarter_name": quarter_name,
         }
 
         self._log_message("Загрузка журнала...")
@@ -2760,6 +2761,23 @@ class EdonishAutoApp:
                 quarter_mark_id = quarter_mark_list[0].get("quarterMarkId", "") or quarter_mark_list[0].get("assignmentMarkId", "")
 
             # Store quarter data for this student
+            # Extract semester/year mark data and property IDs from API response
+            semester_mark_list = s.get("semesterMark", [])
+            semester_mark_val = ""
+            semester_property_id = 0
+            if semester_mark_list and len(semester_mark_list) > 0:
+                semester_mark_val_raw = semester_mark_list[0].get("shortName", "")
+                semester_mark_val = self._parse_grade_display(semester_mark_val_raw)
+                semester_property_id = semester_mark_list[0].get("semesterPropertyId", 0)
+
+            year_mark_list = s.get("yearMark", [])
+            year_mark_val = ""
+            year_property_id = 0
+            if year_mark_list and len(year_mark_list) > 0:
+                year_mark_val_raw = year_mark_list[0].get("shortName", "")
+                year_mark_val = self._parse_grade_display(year_mark_val_raw)
+                year_property_id = year_mark_list[0].get("yearPropertyId", 0)
+
             self._student_quarter_data[row_idx] = {
                 "student_id": student_id,
                 "qprop_id": params.get("qprop_id", 0),
@@ -2767,6 +2785,11 @@ class EdonishAutoApp:
                 "curriculum_property_id": params.get("curriculum_property_id", 0),
                 "quarter_mark_id": quarter_mark_id,
                 "quarter_mark_value": quarter_mark_val,
+                "semester_property_id": semester_property_id,
+                "year_property_id": year_property_id,
+                "semester_mark_value": semester_mark_val,
+                "year_mark_value": year_mark_val,
+                "quarter_name": params.get("quarter_name", ""),
             }
 
             # Calculate ceil(average) for tooltip
@@ -2811,28 +2834,52 @@ class EdonishAutoApp:
             )
             row_cells.append(quarter_cell)
 
-            # Semester and Year mark cells (read-only display)
-            for mark_key in ["semesterMark", "yearMark"]:
-                mark_list = s.get(mark_key, [])
-                mark_val = ""
-                if mark_list and len(mark_list) > 0:
-                    mark_val_raw = mark_list[0].get("shortName", "")
-                    # Parse grade: filter fractional format, convert 0 -> "Н/А"
-                    mark_val = self._parse_grade_display(mark_val_raw)
-                is_na_mark = mark_val == "Н/А"
-                row_cells.append(
-                    Container(
-                        content=Text(mark_val, size=14, weight=FontWeight.W_500, text_align=TextAlign.CENTER,
-                                     color=ft.Colors.RED_700 if is_na_mark else None),
-                        width=44,
-                        padding=2,
-                        bgcolor=ft.Colors.RED_50 if is_na_mark else (ft.Colors.GREY_50 if row_idx % 2 == 0 else ft.Colors.SURFACE),
-                        border=Border(
-                            right=BorderSide(1, ft.Colors.OUTLINE_VARIANT),
-                            bottom=BorderSide(1, ft.Colors.OUTLINE_VARIANT),
-                        ),
-                    )
-                )
+            # Semester mark cell — clickable to auto-calculate
+            is_na_semester = semester_mark_val == "Н/А"
+            if is_na_semester:
+                semester_bgcolor = ft.Colors.RED_50
+            elif semester_mark_val:
+                semester_bgcolor = ft.Colors.BLUE_50
+            else:
+                semester_bgcolor = ft.Colors.GREY_50 if row_idx % 2 == 0 else ft.Colors.SURFACE
+            semester_tooltip = "Полугодие: клик для расчёта ceil((чтв1+чтв2)/2)"
+            semester_cell = Container(
+                content=Text(semester_mark_val, size=14, weight=FontWeight.W_500, text_align=TextAlign.CENTER,
+                             color=ft.Colors.RED_700 if is_na_semester else ft.Colors.BLUE_700 if semester_mark_val else None),
+                width=44,
+                padding=2,
+                bgcolor=semester_bgcolor,
+                border=Border(
+                    right=BorderSide(1, ft.Colors.OUTLINE_VARIANT),
+                    bottom=BorderSide(1, ft.Colors.OUTLINE_VARIANT),
+                ),
+                tooltip=semester_tooltip,
+                on_click=lambda e, r=row_idx: self._on_set_semester_mark(r),
+            )
+            row_cells.append(semester_cell)
+
+            # Year mark cell — clickable to auto-calculate
+            is_na_year = year_mark_val == "Н/А"
+            if is_na_year:
+                year_bgcolor = ft.Colors.RED_50
+            elif year_mark_val:
+                year_bgcolor = ft.Colors.GREEN_50
+            else:
+                year_bgcolor = ft.Colors.GREY_50 if row_idx % 2 == 0 else ft.Colors.SURFACE
+            year_cell = Container(
+                content=Text(year_mark_val, size=14, weight=FontWeight.W_500, text_align=TextAlign.CENTER,
+                             color=ft.Colors.RED_700 if is_na_year else ft.Colors.GREEN_700 if year_mark_val else None),
+                width=44,
+                padding=2,
+                bgcolor=year_bgcolor,
+                border=Border(
+                    right=BorderSide(1, ft.Colors.OUTLINE_VARIANT),
+                    bottom=BorderSide(1, ft.Colors.OUTLINE_VARIANT),
+                ),
+                tooltip="Годовая: клик для расчёта ceil((чтв1+чтв2+чтв3+чтв4)/4) — только если 4-я четверть поставлена",
+                on_click=lambda e, r=row_idx: self._on_set_year_mark(r),
+            )
+            row_cells.append(year_cell)
 
             student_rows.append(Row(row_cells, spacing=0, alignment=MainAxisAlignment.START))
 
@@ -3324,6 +3371,212 @@ class EdonishAutoApp:
                     self._log_message(f"Ошибка четвертной оценки: {result}", "error")
             except Exception as ex:
                 self._log_message(f"Ошибка: {ex}", "error")
+
+        threading.Thread(target=do_set, daemon=True).start()
+
+    def _on_set_semester_mark(self, row: int):
+        """Set semester (полугодие) mark automatically.
+        
+        1st semester: ceil(avg of quarter1 + quarter2) — only if both are set
+        2nd semester: ceil(avg of quarter3 + quarter4) — only if both are set
+        """
+        if not self._journal_loaded:
+            return
+
+        qdata = self._student_quarter_data.get(row)
+        if not qdata:
+            self._show_snackbar("Нет данных ученика")
+            return
+
+        student_id = qdata["student_id"]
+        semester_property_id = qdata.get("semester_property_id", 0)
+        if not semester_property_id:
+            self._show_snackbar("Нет semester_property_id — невозможно поставить полугодие")
+            return
+
+        params = self._current_journal_params
+        group_id = params["group_id"]
+        subject_id = params["subject_id"]
+
+        self._log_message(f"Расчёт полугодия для строки {row + 1}...")
+
+        def do_set():
+            try:
+                # Need to fetch all 4 quarters to calculate semester mark
+                quarter_marks = {}
+                for q in self.quarters_data:
+                    qname = q.get("name", "")
+                    qprop_id = q.get("qpropId", 0)
+                    try:
+                        students = self.api.get_journal_students(
+                            group_id=group_id,
+                            subject_id=subject_id,
+                            quarter_property_id=qprop_id,
+                        )
+                        for s in (students or []):
+                            if s.get("studentId") == student_id:
+                                qm_list = s.get("quarterMark", [])
+                                if qm_list and qm_list[0].get("shortName"):
+                                    val_raw = qm_list[0]["shortName"]
+                                    if "/" in val_raw:
+                                        val_raw = val_raw.split("/")[0]
+                                    if val_raw.isdigit():
+                                        v = int(val_raw)
+                                        if MIN_GRADE <= v <= MAX_GRADE_ALLOW:
+                                            quarter_marks[qname] = v
+                                break
+                    except Exception:
+                        continue
+
+                # Determine current quarter to know which semester
+                current_quarter = params.get("quarter_name", "")
+                # Extract quarter number
+                q_num = 0
+                for ch in current_quarter:
+                    if ch.isdigit():
+                        q_num = int(ch)
+                        break
+
+                # Calculate semester mark
+                semester_grade = None
+                if q_num in (1, 2):
+                    # 1st semester: need quarter 1 and quarter 2
+                    q1 = quarter_marks.get("1 четверть") or quarter_marks.get("Четверть 1") or quarter_marks.get("I четверть")
+                    q2 = quarter_marks.get("2 четверть") or quarter_marks.get("Четверть 2") or quarter_marks.get("II четверть")
+                    if q1 is not None and q2 is not None:
+                        avg = (q1 + q2) / 2
+                        semester_grade = min(max(int(math.ceil(avg)), MIN_GRADE), MAX_GRADE_ALLOW)
+                        self._log_message(f"1-е полугодие: чтв1={q1}, чтв2={q2}, ср.={avg:.2f} → {semester_grade}")
+                    else:
+                        self._log_message(f"Нельзя поставить 1-е полугодие: нужны обе четверти (1 и 2). Найдено: {quarter_marks}", "error")
+                        return
+                elif q_num in (3, 4):
+                    # 2nd semester: need quarter 3 and quarter 4
+                    q3 = quarter_marks.get("3 четверть") or quarter_marks.get("Четверть 3") or quarter_marks.get("III четверть")
+                    q4 = quarter_marks.get("4 четверть") or quarter_marks.get("Четверть 4") or quarter_marks.get("IV четверть")
+                    if q3 is not None and q4 is not None:
+                        avg = (q3 + q4) / 2
+                        semester_grade = min(max(int(math.ceil(avg)), MIN_GRADE), MAX_GRADE_ALLOW)
+                        self._log_message(f"2-е полугодие: чтв3={q3}, чтв4={q4}, ср.={avg:.2f} → {semester_grade}")
+                    else:
+                        self._log_message(f"Нельзя поставить 2-е полугодие: нужны обе четверти (3 и 4). Найдено: {quarter_marks}", "error")
+                        return
+                else:
+                    self._log_message(f"Не удалось определить номер четверти из '{current_quarter}'", "error")
+                    return
+
+                if semester_grade is None:
+                    return
+
+                result = self.api.create_semester_mark(
+                    student_id=student_id,
+                    semester_property_id=semester_property_id,
+                    mark=semester_grade,
+                )
+                if result and not (isinstance(result, dict) and result.get("error")):
+                    self._log_message(f"✅ Полугодие {semester_grade} поставлено (строка {row + 1})")
+                    self._reload_journal()
+                else:
+                    self._log_message(f"Ошибка полугодия: {result}", "error")
+            except Exception as ex:
+                self._log_message(f"Ошибка полугодия: {ex}", "error")
+
+        threading.Thread(target=do_set, daemon=True).start()
+
+    def _on_set_year_mark(self, row: int):
+        """Set year (годовая) mark automatically.
+        
+        Only if quarter 4 is set. Calculates ceil(avg of all 4 quarters).
+        """
+        if not self._journal_loaded:
+            return
+
+        qdata = self._student_quarter_data.get(row)
+        if not qdata:
+            self._show_snackbar("Нет данных ученика")
+            return
+
+        student_id = qdata["student_id"]
+        year_property_id = qdata.get("year_property_id", 0)
+        if not year_property_id:
+            self._show_snackbar("Нет year_property_id — невозможно поставить годовую")
+            return
+
+        params = self._current_journal_params
+        group_id = params["group_id"]
+        subject_id = params["subject_id"]
+
+        self._log_message(f"Расчёт годовой для строки {row + 1}...")
+
+        def do_set():
+            try:
+                # Fetch all 4 quarters
+                quarter_marks = {}
+                for q in self.quarters_data:
+                    qname = q.get("name", "")
+                    qprop_id = q.get("qpropId", 0)
+                    try:
+                        students = self.api.get_journal_students(
+                            group_id=group_id,
+                            subject_id=subject_id,
+                            quarter_property_id=qprop_id,
+                        )
+                        for s in (students or []):
+                            if s.get("studentId") == student_id:
+                                qm_list = s.get("quarterMark", [])
+                                if qm_list and qm_list[0].get("shortName"):
+                                    val_raw = qm_list[0]["shortName"]
+                                    if "/" in val_raw:
+                                        val_raw = val_raw.split("/")[0]
+                                    if val_raw.isdigit():
+                                        v = int(val_raw)
+                                        if MIN_GRADE <= v <= MAX_GRADE_ALLOW:
+                                            quarter_marks[qname] = v
+                                break
+                    except Exception:
+                        continue
+
+                # Check if quarter 4 exists
+                q4 = (quarter_marks.get("4 четверть") or quarter_marks.get("Четверть 4")
+                       or quarter_marks.get("IV четверть"))
+                if q4 is None:
+                    self._log_message("Нельзя поставить годовую: 4-я четверть ещё не поставлена", "error")
+                    return
+
+                # Calculate year mark from all available quarters
+                # Match quarter names to values (try multiple naming conventions)
+                q_vals = []
+                for num in [1, 2, 3, 4]:
+                    for prefix in [f"{num} четверть", f"Четверть {num}",
+                                   {"1": "I", "2": "II", "3": "III", "4": "IV"}[str(num)] + " четверть"]:
+                        v = quarter_marks.get(prefix)
+                        if v is not None:
+                            q_vals.append(v)
+                            break
+
+                if not q_vals:
+                    self._log_message("Нет четвертных оценок для расчёта годовой", "error")
+                    return
+
+                avg = sum(q_vals) / len(q_vals)
+                year_grade = min(max(int(math.ceil(avg)), MIN_GRADE), MAX_GRADE_ALLOW)
+                self._log_message(
+                    f"Годовая: четверти={q_vals}, "
+                    f"ср.={avg:.2f} → {year_grade}"
+                )
+
+                result = self.api.create_year_mark(
+                    student_id=student_id,
+                    year_property_id=year_property_id,
+                    mark=year_grade,
+                )
+                if result and not (isinstance(result, dict) and result.get("error")):
+                    self._log_message(f"✅ Годовая оценка {year_grade} поставлена (строка {row + 1})")
+                    self._reload_journal()
+                else:
+                    self._log_message(f"Ошибка годовой: {result}", "error")
+            except Exception as ex:
+                self._log_message(f"Ошибка годовой: {ex}", "error")
 
         threading.Thread(target=do_set, daemon=True).start()
 
