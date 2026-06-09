@@ -320,7 +320,7 @@ class EdonishAutoApp:
 
     def _build_dashboard_view(self, user_info):
         """Build main dashboard with navigation — adapts to desktop/mobile."""
-        name = f"{user_info.get('last_name', '')} {user_info.get('first_name', '')}".strip()
+        name = f"{user_info.get('last_name') or ''} {user_info.get('first_name') or ''}".strip()
         self._user_info = user_info
         
         # Detect mobile vs desktop based on page width
@@ -462,8 +462,8 @@ class EdonishAutoApp:
 
     def _make_user_avatar(self, user_info: Dict) -> Container:
         """Create a circular avatar with user initials."""
-        first = user_info.get('first_name', '')
-        last = user_info.get('last_name', '')
+        first = user_info.get('first_name') or ''
+        last = user_info.get('last_name') or ''
         initials = ""
         if first:
             initials += first[0].upper()
@@ -651,7 +651,7 @@ class EdonishAutoApp:
 
     def _show_user_info(self, e=None):
         """Show user info dialog with all roles and capabilities."""
-        name = f"{self._user_info.get('last_name', '')} {self._user_info.get('first_name', '')}".strip()
+        name = f"{self._user_info.get('last_name') or ''} {self._user_info.get('first_name') or ''}".strip()
         current_role = self.api.role or "unknown"
         school_id = self.api.school_id
         can_modify = self.api.can_modify_grades
@@ -1456,7 +1456,7 @@ class EdonishAutoApp:
         
         # Find quarter ID
         for g in (self.journal_options or {}).get("groups", []):
-            gname = f"{g.get('number', '')}{g.get('name', '')}"
+            gname = f"{g.get('number') or ''}{g.get('name') or ''}"
             if gname == class_name:
                 for q in g.get("quarters", []):
                     if q.get("name") == quarter_name:
@@ -1575,10 +1575,10 @@ class EdonishAutoApp:
         empty_hw_count = 0
         
         for d in dates:
-            date_str = d.get("assignmentDate", "")[5:]  # MM-DD
-            weekday = d.get("weekdayShortName", "")
-            topic = d.get("topic", "")
-            hw = d.get("homeWork", "")
+            date_str = (d.get("assignmentDate") or "")[5:]  # MM-DD
+            weekday = d.get("weekdayShortName") or ""
+            topic = d.get("topic") or ""
+            hw = d.get("homeWork") or ""
             
             if not topic or not topic.strip():
                 empty_topic_count += 1
@@ -1885,7 +1885,7 @@ class EdonishAutoApp:
         self._user_info['roles'] = self.api.available_role_names
         self._build_dashboard_view(user_info)
         # Log user info for debugging
-        name = f"{user_info.get('last_name', '')} {user_info.get('first_name', '')}".strip()
+        name = f"{user_info.get('last_name') or ''} {user_info.get('first_name') or ''}".strip()
         role = self.api.role
         roles_list = self.api.available_role_names
         can_modify = self.api.can_modify_grades
@@ -1939,14 +1939,14 @@ class EdonishAutoApp:
 
                 if self.journal_options and "groups" in self.journal_options:
                     for g in self.journal_options["groups"]:
-                        group_name = f"{g.get('number', '')}{g.get('name', '')}"
+                        group_name = f"{g.get('number') or ''}{g.get('name') or ''}"
                         groups.append({
                             "id": g["id"],
                             "name": group_name,
-                            "number": g.get("number", ""),
-                            "group": g.get("name", ""),
-                            "edit": g.get("edit", False),
-                            "myClass": g.get("myClass", False),
+                            "number": g.get("number") or "",
+                            "group": g.get("name") or "",
+                            "edit": g.get("edit") or False,
+                            "myClass": g.get("myClass") or False,
                         })
                         for s in g.get("subjects", []):
                             subj_key = (s["subjectId"], s["subjectName"])
@@ -1990,7 +1990,7 @@ class EdonishAutoApp:
                 # (each group has its own quarter IDs and subject list)
                 for gd in self.groups_data:
                     for g in self.journal_options.get("groups", []):
-                        gname = f"{g.get('number', '')}{g.get('name', '')}"
+                        gname = f"{g.get('number') or ''}{g.get('name') or ''}"
                         if gname == gd["name"]:
                             gd["quarters"] = [
                                 {
@@ -2065,7 +2065,7 @@ class EdonishAutoApp:
         value = e.control.value
         subjects = []
         for g in self.journal_options.get("groups", []):
-            gname = f"{g.get('number', '')}{g.get('name', '')}"
+            gname = f"{g.get('number') or ''}{g.get('name') or ''}"
             if gname == value or value == "Все классы":
                 for s in g.get("subjects", []):
                     subjects.append(s["subjectName"])
@@ -2094,7 +2094,7 @@ class EdonishAutoApp:
         value = e.control.value
         subjects = []
         for g in self.journal_options.get("groups", []):
-            gname = f"{g.get('number', '')}{g.get('name', '')}"
+            gname = f"{g.get('number') or ''}{g.get('name') or ''}"
             if gname == value or value == "Все классы":
                 for s in g.get("subjects", []):
                     subjects.append(s["subjectName"])
@@ -2448,7 +2448,7 @@ class EdonishAutoApp:
         # Look up quarter ID from journal_options for this specific group
         # (different groups may have different quarter IDs)
         for g in (self.journal_options or {}).get("groups", []):
-            gname = f"{g.get('number', '')}{g.get('name', '')}"
+            gname = f"{g.get('number') or ''}{g.get('name') or ''}"
             if gname == class_name:
                 for q in g.get("quarters", []):
                     if q.get("name") == quarter_name:
@@ -2623,8 +2623,8 @@ class EdonishAutoApp:
             ),
         ]
         for d in dates:
-            date_str = d.get("assignmentDate", "")[5:]  # MM-DD
-            full_date = d.get("assignmentDate", "")[:10]  # YYYY-MM-DD
+            date_str = (d.get("assignmentDate") or "")[5:]  # MM-DD
+            full_date = (d.get("assignmentDate") or "")[:10]  # YYYY-MM-DD
             is_past = full_date < datetime.now().strftime("%Y-%m-%d")
             header_bgcolor = ft.Colors.ORANGE_50 if is_past else ft.Colors.BLUE_50
             header_border_color = ft.Colors.ORANGE_200 if is_past else ft.Colors.BLUE_200
@@ -2667,7 +2667,7 @@ class EdonishAutoApp:
 
         for row_idx, s in enumerate(students):
             student_id = s["studentId"]
-            student_name = f"{s.get('lastName', '')} {s.get('firstName', '')}"
+            student_name = f"{s.get('lastName') or ''} {s.get('firstName') or ''}"
 
             # Build marks_by_date map: date_id -> mark info
             marks_by_date = {}
@@ -2723,12 +2723,12 @@ class EdonishAutoApp:
                 date_id = d["assignmentDateId"]
                 mark_info = marks_by_date.get(date_id)
                 # Extract grade from shortName — filter out fractional format like "1/2", "0/2"
-                mark_value_raw = mark_info.get("shortName", "") if mark_info else ""
+                mark_value_raw = (mark_info.get("shortName") or "") if mark_info else ""
                 # Parse grade: fractional "X/Y" -> show numerator only (0 -> "Н/А", 1+ -> number)
                 mark_value = self._parse_grade_display(mark_value_raw)
                 mark_id = mark_info.get("assignmentMarkId", "") if mark_info else ""
                 qprop_id = d.get("quarterPropertyId", self._current_journal_params.get("qprop_id", 0))
-                full_date = d.get("assignmentDate", "")[:10]
+                full_date = (d.get("assignmentDate") or "")[:10]
                 is_past_date = full_date < datetime.now().strftime("%Y-%m-%d")
 
                 if mark_value:
@@ -2755,7 +2755,7 @@ class EdonishAutoApp:
             quarter_mark_val = ""
             quarter_mark_id = ""
             if quarter_mark_list and len(quarter_mark_list) > 0:
-                quarter_mark_val_raw = quarter_mark_list[0].get("shortName", "")
+                quarter_mark_val_raw = quarter_mark_list[0].get("shortName") or ""
                 # Parse grade: filter fractional format, convert 0 -> "Н/А"
                 quarter_mark_val = self._parse_grade_display(quarter_mark_val_raw)
                 quarter_mark_id = quarter_mark_list[0].get("quarterMarkId", "") or quarter_mark_list[0].get("assignmentMarkId", "")
@@ -2766,7 +2766,7 @@ class EdonishAutoApp:
             semester_mark_val = ""
             semester_property_id = 0
             if semester_mark_list and len(semester_mark_list) > 0:
-                semester_mark_val_raw = semester_mark_list[0].get("shortName", "")
+                semester_mark_val_raw = semester_mark_list[0].get("shortName") or ""
                 semester_mark_val = self._parse_grade_display(semester_mark_val_raw)
                 semester_property_id = semester_mark_list[0].get("semesterPropertyId", 0)
 
@@ -2774,7 +2774,7 @@ class EdonishAutoApp:
             year_mark_val = ""
             year_property_id = 0
             if year_mark_list and len(year_mark_list) > 0:
-                year_mark_val_raw = year_mark_list[0].get("shortName", "")
+                year_mark_val_raw = year_mark_list[0].get("shortName") or ""
                 year_mark_val = self._parse_grade_display(year_mark_val_raw)
                 year_property_id = year_mark_list[0].get("yearPropertyId", 0)
 
@@ -2795,7 +2795,7 @@ class EdonishAutoApp:
             # Calculate ceil(average) for tooltip
             grade_values = []
             for m in (s.get("subjectMarks") or []):
-                sn = m.get("shortName", "")
+                sn = m.get("shortName") or ""
                 # Parse grade: filter fractional format
                 if sn and "/" in sn:
                     sn = sn.split("/")[0]
@@ -3331,7 +3331,7 @@ class EdonishAutoApp:
                 # Step 3: Extract grades from fresh API response
                 grade_values = []
                 for m in (student.get("subjectMarks") or []):
-                    sn = m.get("shortName", "")
+                    sn = m.get("shortName") or ""
                     # Parse grade: filter fractional format (0/X = Н/А, skip it)
                     if sn and "/" in sn:
                         numerator = sn.split("/")[0]
@@ -3607,10 +3607,10 @@ class EdonishAutoApp:
 
         empty_topic_count = 0
         for d in self._dates_data:
-            date_str = d.get("assignmentDate", "")[5:]  # MM-DD
-            weekday = d.get("weekdayShortName", "")
-            topic = d.get("topic", "")
-            hw = d.get("homeWork", "")
+            date_str = (d.get("assignmentDate") or "")[5:]  # MM-DD
+            weekday = d.get("weekdayShortName") or ""
+            topic = d.get("topic") or ""
+            hw = d.get("homeWork") or ""
             has_topic = bool(topic and topic.strip())
             if not has_topic:
                 empty_topic_count += 1
@@ -3666,7 +3666,7 @@ class EdonishAutoApp:
             return
 
         # Find empty dates
-        empty_dates = [d for d in self._dates_data if not d.get("topic", "").strip()]
+        empty_dates = [d for d in self._dates_data if not (d.get("topic") or "").strip()]
         if not empty_dates:
             self._show_snackbar("Все даты уже имеют темы!")
             return
@@ -3715,7 +3715,7 @@ class EdonishAutoApp:
             self._show_snackbar("Список ДЗ пуст!")
             return
 
-        empty_dates = [d for d in self._dates_data if not d.get("homeWork", "").strip()]
+        empty_dates = [d for d in self._dates_data if not (d.get("homeWork") or "").strip()]
         if not empty_dates:
             self._show_snackbar("Все даты уже имеют ДЗ!")
             return
