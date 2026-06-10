@@ -116,3 +116,30 @@ Stage Summary:
 - Таблица журнала теперь полностью прокручиваемая
 - Все элементы адаптированы под маленькие экраны
 - Готово к релизу v3.17.2
+
+---
+Task ID: 5
+Agent: Main
+Task: Fix Н/А '1' bug, copyable logs, group-specific quarters for topics (v3.23.0)
+
+Work Log:
+- Analyzed screenshot: logs show "Нет дат для заполнения!" errors, Н/А displays as '1', logs not copyable
+- Fixed critical Н/А display bug: API returns shortName="1/2" for Н/А grades (mark_type_id=1),
+  but _parse_grade_display() extracted numerator "1" and showed "1" instead of "Н/А"
+- Updated _parse_grade_display() to accept mark_value parameter and detect Н/А via:
+  1. mark_value==0 (definitive Н/А from API)
+  2. numerator < MIN_GRADE (1,2,3,4 in fractional format are all Н/А)
+- Updated all callers: subject marks, quarter marks, semester marks, year marks
+- Fixed logs page: added copyable text mode with toggle (visual/text), copy button,
+  selectable Text controls, and _logs_lines storage for clipboard
+- Fixed topics 'no dates' error: _on_topics_load/fill/hw_fill/upload now use
+  group-specific quarter IDs (qpropId) from groups_data instead of global quarters_data,
+  which may have wrong IDs for specific classes
+- Bumped version to 3.23.0
+- Committed and pushed to GitHub, created tag v3.23.0
+
+Stage Summary:
+- v3.23.0 released with 3 major fixes
+- Н/А grades now correctly display as "Н/А" instead of "1"
+- Logs are now copyable (text mode + clipboard button)
+- Topics use correct per-group quarter IDs
