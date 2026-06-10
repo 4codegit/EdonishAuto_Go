@@ -7,7 +7,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Callable
 from dataclasses import dataclass, field
-from config import MIN_GRADE, MAX_GRADE, DEFAULT_WORKERS, DEFAULT_BATCH_SIZE
+from config import MIN_GRADE, MAX_GRADE, DEFAULT_WORKERS, DEFAULT_BATCH_SIZE, ABSENT_MARK, ABSENT_SHORT, ABSENT_DISPLAY
 
 logger = logging.getLogger("edonish_auto")
 
@@ -20,19 +20,19 @@ def weighted_random_grade(min_grade: int = MIN_GRADE, max_grade: int = MAX_GRADE
     with lower probability for very low (3-4) or very high (10) grades.
     This produces more realistic grade distributions.
     
-    When include_na=True, grade value 0 represents Н/А (Не аттестован)
+    When include_na=True, grade value 0 represents absent (Не аттестован)
     with a small probability (~3%).
     
     Returns:
-        int: Grade value (0 for Н/А, or min_grade..max_grade for numeric grades)
+        int: Grade value (ABSENT_MARK for absent, or min_grade..max_grade for numeric grades)
     """
     # Build grade options and weights
     grades = []
     weights = []
     
-    # Н/А option (mark value 0)
+    # Absent option (mark value 0)
     if include_na:
-        grades.append(0)  # 0 = Н/А
+        grades.append(ABSENT_MARK)  # 0 = absent
         weights.append(1)  # ~3% probability
     
     for g in range(min_grade, max_grade + 1):
@@ -253,7 +253,7 @@ class GradeEngine:
                             if not fill_empty_only and date_id in existing_marks:
                                 existing_mark_id = existing_marks[date_id].get("assignmentMarkId", "")
 
-                            # Generate weighted random grade (0 = Н/А if include_na)
+                            # Generate weighted random grade (ABSENT_MARK = absent if include_na)
                             grade = weighted_random_grade(min_grade, max_grade, include_na=include_na)
                             task = GradeTask(
                                 student_id=student_id,
@@ -342,11 +342,11 @@ class GradeEngine:
                         grade_values = []
                         for m in subject_marks:
                             sn = m.get("shortName", "")
-                            # Parse grade: filter fractional format (0/X = Н/А, skip)
+                            # Parse grade: filter fractional format (0/X = absent, skip)
                             if sn and "/" in sn:
                                 numerator = sn.split("/")[0]
                                 if numerator == "0":
-                                    continue  # Н/А — skip for average calculation
+                                    continue  # absent — skip for average calculation
                                 sn = numerator
                             if sn and sn.isdigit():
                                 v = int(sn)
@@ -448,7 +448,7 @@ class GradeEngine:
                         task.result = result
                         completed += 1
                         plan.completed = completed
-                        display_mark = "Н/А" if task.mark == 0 else task.mark
+                        display_mark = ABSENT_SHORT if task.mark == ABSENT_MARK else task.mark
                         self._log(
                             f"  ✅ [{worker_id}] {task.student_name} -> {display_mark} "
                             f"({task.date_str})"
@@ -529,7 +529,7 @@ class GradeEngine:
                     task.status = "success"
                     completed += 1
                     plan.completed = completed
-                    self._log(f"  ✅ {task.student_name} -> {'Н/А' if task.mark == 0 else task.mark} ({task.date_str})")
+                    self._log(f"  ✅ {task.student_name} -> {ABSENT_SHORT if task.mark == ABSENT_MARK else task.mark} ({task.date_str})")
                 else:
                     task.status = "error"
                     failed += 1

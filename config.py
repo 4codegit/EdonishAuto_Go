@@ -95,13 +95,18 @@ MAX_GRADE = 10
 MAX_GRADE_ALLOW = 11  # Allow manual entry of 11 but not in random
 DEFAULT_GRADE_RANGE = (5, 10)
 
+# Absent grade (mark=0, mark_type_id=1 in edonish API)
+ABSENT_DISPLAY = "Отсутствует"  # UI label for Н/А grade
+ABSENT_SHORT = "Н/А"  # Short display in journal cells (edonish standard)
+ABSENT_MARK = 0  # Mark value sent to API for absent
+
 # Worker settings
 DEFAULT_WORKERS = 4
 DEFAULT_BATCH_SIZE = 4
 
 # App settings
 APP_NAME = "eDonish Auto"
-APP_VERSION = "3.23.0"
+APP_VERSION = "3.24.0"
 APP_AUTHOR = "Edonish Auto Team"
 
 # Session file — uses mobile-safe directory

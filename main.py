@@ -73,6 +73,7 @@ from config import (
     APP_NAME, APP_VERSION, MIN_GRADE, MAX_GRADE, MAX_GRADE_ALLOW, DEFAULT_WORKERS,
     COLOR_PRIMARY, COLOR_SUCCESS, COLOR_ERROR, COLOR_WARNING,
     SESSION_FILE, _get_app_dir,
+    ABSENT_DISPLAY, ABSENT_SHORT, ABSENT_MARK,
 )
 from api_client import EdonishAPI, AuthenticationError, DateLockedError
 
@@ -828,9 +829,9 @@ class EdonishAutoApp:
             value=True,
         )
         self.na_grade_check = Checkbox(
-            label="Добавлять Н/А (рандом)",
+            label="Добавлять Отсутствует (рандом)",
             value=True,
-            tooltip="Включать оценку Н/А (Не аттестован) при случайной генерации оценок",
+            tooltip="Включать оценку Отсутствует (absent) при случайной генерации оценок",
         )
         self.signature_check = Checkbox(
             label="Добавить подпись",
@@ -2854,7 +2855,7 @@ class EdonishAutoApp:
             lines.append(f"  {key}")
             lines.append(f"    Оценок: {len(tasks)}")
             for t in tasks[:5]:
-                lines.append(f"    - {t.student_name} -> {'Н/А' if t.mark == 0 else t.mark} ({t.date_str})")
+                lines.append(f"    - {t.student_name} -> {ABSENT_SHORT if t.mark == ABSENT_MARK else t.mark} ({t.date_str})")
             if len(tasks) > 5:
                 lines.append(f"    ... и ещё {len(tasks) - 5}")
             lines.append("")
@@ -3365,7 +3366,7 @@ class EdonishAutoApp:
                 quarter_tooltip = "Нет оценок для расчёта"
 
             # Clickable quarter mark cell
-            is_na_quarter = quarter_mark_val == "Н/А"
+            is_na_quarter = quarter_mark_val == ABSENT_SHORT
             if is_na_quarter:
                 quarter_bgcolor = ft.Colors.RED_50
             elif quarter_mark_val:
@@ -3388,7 +3389,7 @@ class EdonishAutoApp:
             row_cells.append(quarter_cell)
 
             # Semester mark cell — clickable to auto-calculate
-            is_na_semester = semester_mark_val == "Н/А"
+            is_na_semester = semester_mark_val == ABSENT_SHORT
             if is_na_semester:
                 semester_bgcolor = ft.Colors.RED_50
             elif semester_mark_val:
@@ -3412,7 +3413,7 @@ class EdonishAutoApp:
             row_cells.append(semester_cell)
 
             # Year mark cell — clickable to auto-calculate
-            is_na_year = year_mark_val == "Н/А"
+            is_na_year = year_mark_val == ABSENT_SHORT
             if is_na_year:
                 year_bgcolor = ft.Colors.RED_50
             elif year_mark_val:
@@ -3453,7 +3454,7 @@ class EdonishAutoApp:
         # Help text
         student_rows.append(Container(height=4))
         student_rows.append(Text(
-            "Стрелки: навигация | Цифра 5-11: оценка | Н/А: не аттестован | Delete: удалить | 🎲: рандом | Чтв: ceil(ср.)",
+            "Стрелки: навигация | Цифра 5-11: оценка | Отсутствует: не аттестован | Delete: удалить | 🎲: рандом | Чтв: ceil(ср.)",
             size=11, color=ft.Colors.GREY_400,
         ))
 
@@ -3495,9 +3496,9 @@ class EdonishAutoApp:
             return ""
         short_name = short_name.strip()
         
-        # Already Н/А
-        if short_name in ("Н/А", "Н/A", "н/а", "N/A", "n/a"):
-            return "Н/А"
+        # Already absent (Н/А)
+        if short_name in (ABSENT_SHORT, "Н/A", "н/а", "N/A", "n/a"):
+            return ABSENT_SHORT
         
         # Fractional format: "X/Y" -> check for Н/А or extract numerator
         if "/" in short_name:
@@ -3505,12 +3506,12 @@ class EdonishAutoApp:
             numerator = parts[0].strip()
             if numerator.isdigit():
                 num = int(numerator)
-                # Н/А detection: mark_value=0 OR numerator < MIN_GRADE
-                # (edonish returns "1/2" for Н/А, where 1 is mark_type_id)
-                if mark_value is not None and mark_value == 0:
-                    return "Н/А"
-                if num == 0 or (num < MIN_GRADE and num > 0):
-                    return "Н/А"
+                # Absent detection: mark_value=0 OR numerator < MIN_GRADE
+                # (edonish returns "1/2" for absent, where 1 is mark_type_id)
+                if mark_value is not None and mark_value == ABSENT_MARK:
+                    return ABSENT_SHORT
+                if num == ABSENT_MARK or (num < MIN_GRADE and num > 0):
+                    return ABSENT_SHORT
                 return str(num)
             else:
                 return short_name  # Fallback: show as-is
@@ -3525,7 +3526,7 @@ class EdonishAutoApp:
         Н/А cells have a red-tinted background and different input filter.
         """
         has_mark = bool(value and str(value).strip())
-        is_na = str(value).strip() == "Н/А"
+        is_na = str(value).strip() == ABSENT_SHORT
         
         if is_na:
             cell_bgcolor = ft.Colors.RED_50
@@ -3538,7 +3539,7 @@ class EdonishAutoApp:
         else:
             cell_bgcolor = ft.Colors.GREY_50 if row % 2 == 0 else ft.Colors.SURFACE
 
-        # Store data for this cell — for Н/А, store raw value 0
+        # Store data for this cell — for absent, store raw value 0
         self._grade_data[(row, col)] = {
             "mark_id": mark_id,
             "student_id": student_id,
@@ -3567,7 +3568,7 @@ class EdonishAutoApp:
             content_padding=4,
             bgcolor=cell_bgcolor,
             input_filter=ft.NumbersOnlyInputFilter() if not is_na else None,
-            max_length=3 if is_na else 2,  # "Н/А" is 3 chars
+            max_length=3 if is_na else 2,  # ABSENT_SHORT is 3 chars
             color=ft.Colors.RED_700 if is_na else None,
             on_focus=lambda e, r=row, c=col: self._on_cell_focus(r, c),
             on_submit=lambda e, r=row, c=col: self._on_cell_submit(r, c, e),
@@ -3588,18 +3589,18 @@ class EdonishAutoApp:
             return
         digit = val.strip()
         
-        # Check for Н/А input (user types "н", "на", "на", etc.)
+        # Check for absent input (user types "н", "на", "на", etc.)
         na_variants = ("н/а", "н/a", "n/a", "на", "na")
         if digit.lower() in na_variants:
-            # Submit Н/А grade
-            self._set_cell_grade(row, col, 0)  # 0 = Н/А
+            # Submit absent grade
+            self._set_cell_grade(row, col, ABSENT_MARK)
             return
         
         if not digit.isdigit():
-            # Allow typing Cyrillic/Latin letters for Н/А
+            # Allow typing Cyrillic/Latin letters for absent
             na_chars = set("нНАнaA/")
             if all(c in na_chars for c in digit):
-                return  # Wait — might be typing "Н/А"
+                return  # Wait — might be typing absent variant
             e.control.value = self._grade_data.get((row, col), {}).get("current_value", "")
             try:
                 self.page.update()
@@ -3616,7 +3617,7 @@ class EdonishAutoApp:
         elif grade > MAX_GRADE_ALLOW:
             # Too high — reject
             e.control.value = ""
-            self._show_snackbar(f"Оценка должна быть от {MIN_GRADE} до {MAX_GRADE_ALLOW} или Н/А")
+            self._show_snackbar(f"Оценка должна быть от {MIN_GRADE} до {MAX_GRADE_ALLOW} или {ABSENT_DISPLAY}")
             try:
                 self.page.update()
             except Exception:
@@ -3626,7 +3627,7 @@ class EdonishAutoApp:
             pass
         elif grade < MIN_GRADE:
             e.control.value = ""
-            self._show_snackbar(f"Оценка должна быть от {MIN_GRADE} до {MAX_GRADE_ALLOW} или Н/А")
+            self._show_snackbar(f"Оценка должна быть от {MIN_GRADE} до {MAX_GRADE_ALLOW} или {ABSENT_DISPLAY}")
             try:
                 self.page.update()
             except Exception:
@@ -3639,10 +3640,10 @@ class EdonishAutoApp:
             return
         digit = val.strip()
         
-        # Check for Н/А input
+        # Check for absent input
         na_variants = ("н/а", "н/a", "n/a", "на", "na", "н/А", "Н/а", "Н/А", "Н/A")
         if digit.lower().replace('А', 'а').replace('A', 'а') in ("н/а", "на", "n/a", "na"):
-            self._set_cell_grade(row, col, 0)  # 0 = Н/А
+            self._set_cell_grade(row, col, ABSENT_MARK)
             return
         
         if digit.isdigit():
@@ -3650,7 +3651,7 @@ class EdonishAutoApp:
             if MIN_GRADE <= grade <= MAX_GRADE_ALLOW:
                 self._set_cell_grade(row, col, grade)
             else:
-                self._show_snackbar(f"Оценка должна быть от {MIN_GRADE} до {MAX_GRADE_ALLOW} или Н/А")
+                self._show_snackbar(f"Оценка должна быть от {MIN_GRADE} до {MAX_GRADE_ALLOW} или {ABSENT_DISPLAY}")
                 e.control.value = self._grade_data[(row, col)].get("current_value", "")
                 self.page.update()
 
@@ -3674,7 +3675,7 @@ class EdonishAutoApp:
                 "warning"
             )
 
-        self._log_message(f"\u27a1\ufe0f Установка оценки {'Н/А' if grade == 0 else grade} в ячейке (строка {row + 1})")
+        self._log_message(f"\u27a1\ufe0f Установка оценки {ABSENT_DISPLAY if grade == ABSENT_MARK else grade} в ячейке (строка {row + 1})")
 
         # Visual feedback only
         cell.border_color = ft.Colors.ORANGE_400
@@ -3718,10 +3719,10 @@ class EdonishAutoApp:
                 )
                 
                 if result and not (isinstance(result, dict) and result.get("error")):
-                    display_val = "Н/А" if grade == 0 else str(grade)
+                    display_val = ABSENT_SHORT if grade == ABSENT_MARK else str(grade)
                     data["current_value"] = display_val
                     data["original_value"] = display_val
-                    data["is_na"] = (grade == 0)
+                    data["is_na"] = (grade == ABSENT_MARK)
                     new_mark_id = result.get("assignmentMarkId", "") if isinstance(result, dict) else ""
                     data["mark_id"] = new_mark_id
                     self._log_message(f"  \u2705 Успех! Mark ID: {new_mark_id}")
@@ -3731,8 +3732,8 @@ class EdonishAutoApp:
                         cell.value = display_val
                         cell.border_color = ft.Colors.TRANSPARENT
                         if hasattr(cell, 'bgcolor'):
-                            cell.bgcolor = ft.Colors.RED_50 if grade == 0 else ft.Colors.GREEN_50
-                        if grade == 0:
+                            cell.bgcolor = ft.Colors.RED_50 if grade == ABSENT_MARK else ft.Colors.GREEN_50
+                        if grade == ABSENT_MARK:
                             cell.color = ft.Colors.RED_700
                         else:
                             cell.color = None
@@ -3898,11 +3899,11 @@ class EdonishAutoApp:
                 grade_values = []
                 for m in (student.get("subjectMarks") or []):
                     sn = m.get("shortName") or ""
-                    # Parse grade: filter fractional format (0/X = Н/А, skip it)
+                    # Parse grade: filter fractional format (0/X = absent, skip it)
                     if sn and "/" in sn:
                         numerator = sn.split("/")[0]
                         if numerator == "0":
-                            continue  # Н/А — skip for average calculation
+                            continue  # absent — skip for average calculation
                         sn = numerator
                     if sn and sn.isdigit():
                         v = int(sn)
