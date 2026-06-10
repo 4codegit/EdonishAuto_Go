@@ -1275,7 +1275,6 @@ class EdonishAutoApp:
             min_lines=20,
             max_lines=None,
             text_size=12,
-            font_family="Roboto Mono",
             border_color=ft.Colors.TRANSPARENT,
             focused_border_color=ft.Colors.BLUE_200,
             cursor_color=ft.Colors.TRANSPARENT,
