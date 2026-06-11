@@ -49,6 +49,7 @@ type App struct {
 
 	// Status bar
 	statusLabel *widget.Label
+	schoolLabel *widget.Label
 
 	// School selector in header
 	schoolSelect *widget.Select
@@ -64,9 +65,9 @@ type App struct {
 // NewApp creates a new application instance.
 func NewApp() *App {
 	a := &App{
-		fyneApp:    app.NewWithID("com.edonish.auto"),
-		apiClient:  api.NewClient(),
-		logBuffer:  make([]string, 0),
+		fyneApp:   app.NewWithID("com.edonish.auto"),
+		apiClient: api.NewClient(),
+		logBuffer: make([]string, 0),
 	}
 	a.engine = engine.NewEngine(a.apiClient)
 	a.engine.SetCallbacks(a.onProgress, a.onLog)
@@ -133,10 +134,20 @@ func (a *App) showDashboard(userInfo *api.UserInfo) {
 
 	// App bar with user info and actions
 	userName := fmt.Sprintf("%s %s", userInfo.LastName, userInfo.FirstName)
-	schoolInfo := fmt.Sprintf("Школа ID: %d | %s", a.apiClient.SchoolID, a.apiClient.Role)
+	roleDisplay := a.apiClient.Role
+	switch roleDisplay {
+	case "classroom-teacher":
+		roleDisplay = "Кл. руководитель"
+	case "teacher":
+		roleDisplay = "Учитель"
+	case "school_admin":
+		roleDisplay = "Админ"
+	case "director":
+		roleDisplay = "Директор"
+	}
 
-	statusLabel := widget.NewLabel("Готов")
-	a.statusLabel = statusLabel
+	a.schoolLabel = widget.NewLabel(fmt.Sprintf("Школа: %d (%s)", a.apiClient.SchoolID, roleDisplay))
+	a.statusLabel = widget.NewLabel("Готов")
 
 	// Theme toggle
 	themeBtn := widget.NewButton("Тема", func() {
@@ -153,14 +164,21 @@ func (a *App) showDashboard(userInfo *api.UserInfo) {
 		a.onLogout()
 	})
 
-	// School selector (only if multiple schools)
-	headerObjects := []fyne.CanvasObject{
-		widget.NewLabel(fmt.Sprintf("%s v%s", config.AppName, config.AppVersion)),
+	// Header layout
+	headerLeft := container.NewHBox(
+		widget.NewLabelWithStyle(fmt.Sprintf("%s v%s", config.AppName, config.AppVersion), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		widget.NewSeparator(),
 		widget.NewLabel(userName),
-		widget.NewLabel(schoolInfo),
-	}
+		a.schoolLabel,
+	)
 
+	headerRight := container.NewHBox(
+		a.statusLabel,
+		themeBtn,
+		logoutBtn,
+	)
+
+	// School selector (only if multiple schools)
 	if a.apiClient.HasMultipleSchools() {
 		schoolOpts := make([]string, len(a.apiClient.GetSchools()))
 		for i, s := range a.apiClient.GetSchools() {
@@ -176,12 +194,11 @@ func (a *App) showDashboard(userInfo *api.UserInfo) {
 				break
 			}
 		}
-		headerObjects = append(headerObjects, widget.NewLabel("Школа:"), a.schoolSelect)
+		headerLeft.Add(widget.NewLabel("Школа:"))
+		headerLeft.Add(a.schoolSelect)
 	}
 
-	headerObjects = append(headerObjects, statusLabel, themeBtn, logoutBtn)
-
-	header := container.NewHBox(headerObjects...)
+	header := container.NewBorder(nil, nil, headerLeft, headerRight)
 
 	content := container.NewBorder(header, nil, nil, nil, a.tabs)
 	a.mainWindow.SetContent(content)
@@ -203,6 +220,22 @@ func (a *App) onSchoolChange(selected string) {
 			a.LogMessage(fmt.Sprintf("Переключение на школу: %s (ID: %d)", s.Name, s.ID), "info")
 			a.SaveSessionSchool(s.ID)
 
+			// Update school label
+			if a.schoolLabel != nil {
+				roleDisplay := s.Role
+				switch roleDisplay {
+				case "classroom-teacher":
+					roleDisplay = "Кл. руководитель"
+				case "teacher":
+					roleDisplay = "Учитель"
+				case "school_admin":
+					roleDisplay = "Админ"
+				case "director":
+					roleDisplay = "Директор"
+				}
+				a.schoolLabel.SetText(fmt.Sprintf("Школа: %d (%s)", s.ID, roleDisplay))
+			}
+
 			// Stop any running engine
 			if a.engine.IsRunning() {
 				a.engine.Stop()
@@ -216,7 +249,6 @@ func (a *App) onSchoolChange(selected string) {
 			a.autoPage.UpdateDropdowns()
 			a.journalPg.UpdateDropdowns()
 
-			// Update school info label
 			go a.loadInitialData()
 			return
 		}
@@ -246,12 +278,12 @@ func (a *App) loadInitialData() {
 				if gm, ok := g.(map[string]interface{}); ok {
 					groupName := fmt.Sprintf("%s%s", mapStr(gm, "number"), mapStr(gm, "name"))
 					a.groupsData = append(a.groupsData, map[string]interface{}{
-						"id":      gm["id"],
-						"name":    groupName,
-						"number":  gm["number"],
-						"group":   gm["name"],
-						"edit":    gm["edit"],
-						"myClass": gm["myClass"],
+						"id":       gm["id"],
+						"name":     groupName,
+						"number":   gm["number"],
+						"group":    gm["name"],
+						"edit":     gm["edit"],
+						"myClass":  gm["myClass"],
 						"subjects": gm["subjects"],
 					})
 					// Extract subjects
@@ -292,9 +324,11 @@ func (a *App) loadInitialData() {
 	msg := fmt.Sprintf("Загружено: %d классов, %d предметов", len(a.groupsData), len(a.teacherSubjects))
 	a.LogMessage(msg, "info")
 
-	// Update all dropdowns
-	a.autoPage.UpdateDropdowns()
-	a.journalPg.UpdateDropdowns()
+	// Update all dropdowns on the main goroutine
+	fyne.Do(func() {
+		a.autoPage.UpdateDropdowns()
+		a.journalPg.UpdateDropdowns()
+	})
 }
 
 // onLogout handles user logout.
@@ -315,7 +349,9 @@ func (a *App) onLogout() {
 
 // onProgress handles progress updates from the engine.
 func (a *App) onProgress(plan *engine.GradePlan) {
-	a.autoPage.UpdateProgress(plan)
+	fyne.Do(func() {
+		a.autoPage.UpdateProgress(plan)
+	})
 }
 
 // onLog handles log messages from the engine.
@@ -362,10 +398,10 @@ func (a *App) ClearLogs() {
 // SaveSession saves login credentials to disk.
 func (a *App) SaveSession(loginID, password string, remember bool) {
 	data := map[string]interface{}{
-		"login_id":   loginID,
-		"password":   password,
-		"remember":   remember,
-		"school_id":  a.apiClient.SchoolID,
+		"login_id":  loginID,
+		"password":  password,
+		"remember":  remember,
+		"school_id": a.apiClient.SchoolID,
 	}
 	if !remember {
 		data["login_id"] = ""
@@ -380,7 +416,6 @@ func (a *App) SaveSessionSchool(schoolID int) {
 	// Read existing session
 	data, err := os.ReadFile(config.SessionFile())
 	if err != nil {
-		// Create a minimal session
 		session := map[string]interface{}{
 			"school_id": schoolID,
 		}

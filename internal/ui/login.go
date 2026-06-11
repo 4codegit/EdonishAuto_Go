@@ -7,6 +7,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -37,44 +38,56 @@ func (p *LoginPage) Build() fyne.CanvasObject {
 	p.rememberChk = widget.NewCheck("Запомнить меня", nil)
 
 	p.statusLabel = widget.NewLabel("")
+	p.statusLabel.Wrapping = fyne.TextWrapWord
 
 	p.loginBtn = widget.NewButton("Войти", func() {
 		p.doLogin()
 	})
 	p.loginBtn.Importance = widget.HighImportance
 
-	// Logo and title
-	icon := canvas.NewImageFromResource(nil)
+	// Logo
+	icon := canvas.NewImageFromResource(theme.ComputerIcon())
 	icon.FillMode = canvas.ImageFillContain
-	icon.SetMinSize(fyne.NewSize(64, 64))
+	icon.SetMinSize(fyne.NewSize(80, 80))
 
 	title := widget.NewLabelWithStyle("eDonish Auto", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 	subtitle := widget.NewLabel("Автоматизация электронного журнала")
 	subtitle.Alignment = fyne.TextAlignCenter
 
-	shortcut := widget.NewLabel("Enter для быстрого входа")
+	versionLabel := widget.NewLabel(fmt.Sprintf("v0.1.0"))
+	versionLabel.Alignment = fyne.TextAlignCenter
+	versionLabel.TextStyle = fyne.TextStyle{Italic: true}
+
+	shortcut := widget.NewLabel("Enter — быстрый вход")
 	shortcut.Alignment = fyne.TextAlignCenter
 	shortcut.TextStyle = fyne.TextStyle{Italic: true}
 
-	form := container.NewVBox(
+	// Login form card
+	formCard := widget.NewCard("", "", container.NewVBox(
+		p.loginEntry,
+		p.passEntry,
+		p.rememberChk,
+		p.loginBtn,
+		container.NewCenter(shortcut),
+		p.statusLabel,
+	))
+
+	content := container.NewVBox(
 		layout.NewSpacer(),
 		container.NewCenter(
 			container.NewVBox(
+				container.NewCenter(icon),
 				container.NewCenter(title),
 				container.NewCenter(subtitle),
+				container.NewCenter(versionLabel),
 				widget.NewSeparator(),
-				p.loginEntry,
-				p.passEntry,
-				p.rememberChk,
-				p.loginBtn,
-				container.NewCenter(shortcut),
-				p.statusLabel,
+				formCard,
 			),
 		),
 		layout.NewSpacer(),
 	)
 
-	return form
+	return content
 }
 
 // LoadSession loads saved session data into the form.
@@ -90,6 +103,8 @@ func (p *LoginPage) LoadSession() {
 }
 
 // doLogin handles the login button press.
+// All UI updates from the background goroutine are scheduled via fyne.Do
+// to ensure they run on the main goroutine (required since Fyne v2.5).
 func (p *LoginPage) doLogin() {
 	loginID := p.loginEntry.Text
 	password := p.passEntry.Text
@@ -101,7 +116,7 @@ func (p *LoginPage) doLogin() {
 
 	p.loginBtn.Disable()
 	p.loginBtn.SetText("Вход...")
-	p.statusLabel.SetText("Подключение...")
+	p.statusLabel.SetText("Подключение к серверу...")
 
 	// Save session
 	p.app.SaveSession(loginID, password, p.rememberChk.Checked)
@@ -109,11 +124,11 @@ func (p *LoginPage) doLogin() {
 	go func() {
 		userInfo, err := p.app.apiClient.Login(loginID, password)
 		if err != nil {
-			p.loginBtn.Enable()
-			p.loginBtn.SetText("Войти")
-			p.statusLabel.SetText(err.Error())
-			p.statusLabel.Refresh()
-			p.loginBtn.Refresh()
+			fyne.Do(func() {
+				p.loginBtn.Enable()
+				p.loginBtn.SetText("Войти")
+				p.statusLabel.SetText(err.Error())
+			})
 			return
 		}
 
@@ -121,9 +136,10 @@ func (p *LoginPage) doLogin() {
 		_, _, _, savedSchoolID := p.app.LoadSessionData()
 		if savedSchoolID > 0 && p.app.apiClient.HasMultipleSchools() {
 			p.app.apiClient.SetSchool(savedSchoolID)
-			p.app.LogMessage(fmt.Sprintf("Восстановлена школа ID: %d", savedSchoolID), "info")
 		}
 
-		p.app.onLoginSuccess(userInfo)
+		fyne.Do(func() {
+			p.app.onLoginSuccess(userInfo)
+		})
 	}()
 }

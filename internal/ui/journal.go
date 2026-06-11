@@ -39,18 +39,18 @@ func (p *JournalPage) Build() fyne.CanvasObject {
 	p.quarterSelect = widget.NewSelect([]string{"Выберите..."}, func(s string) {})
 	p.quarterSelect.PlaceHolder = "Четверть"
 
-	loadBtn := widget.NewButton("📥 Загрузить", func() {
+	loadBtn := widget.NewButton("Загрузить журнал", func() {
 		p.loadJournal()
 	})
 	loadBtn.Importance = widget.HighImportance
 
 	p.journalEntry = widget.NewMultiLineEntry()
-	p.journalEntry.SetPlaceHolder("Выберите класс, предмет и четверть для просмотра журнала")
+	p.journalEntry.SetPlaceHolder("Выберите класс, предмет и четверть, затем нажмите «Загрузить журнал»")
 	p.journalEntry.Wrapping = fyne.TextWrapWord
 	p.journalEntry.SetMinRowsVisible(20)
 
-	toolbar := widget.NewCard("📖 Просмотр журнала", "", container.NewVBox(
-		container.NewHBox(
+	toolbar := widget.NewCard("Просмотр журнала", "", container.NewVBox(
+		container.NewGridWithColumns(4,
 			p.classSelect,
 			p.subjectSelect,
 			p.quarterSelect,
@@ -157,7 +157,9 @@ func (p *JournalPage) loadJournal() {
 	go func() {
 		groups := p.getSelectedGroups(classSelected)
 		if len(groups) == 0 {
-			p.journalEntry.SetText("Не выбран класс")
+			fyne.Do(func() {
+				p.journalEntry.SetText("Не выбран класс")
+			})
 			return
 		}
 
@@ -181,20 +183,20 @@ func (p *JournalPage) loadJournal() {
 					// Get dates
 					datesData, err := p.app.apiClient.GetJournalDates(groupID, subjectID, qpropID)
 					if err != nil {
-						allLines = append(allLines, fmt.Sprintf("❌ Ошибка дат: %v", err))
+						allLines = append(allLines, fmt.Sprintf("Ошибка дат: %v", err))
 						continue
 					}
 
 					days := engine.ExtractDays(datesData)
 					if len(days) == 0 {
-						allLines = append(allLines, fmt.Sprintf("⏭️ Нет дат: %s | %s | %s", groupName, subjectName, quarterName))
+						allLines = append(allLines, fmt.Sprintf("Нет дат: %s | %s | %s", groupName, subjectName, quarterName))
 						continue
 					}
 
 					// Get students
 					studentsData, err := p.app.apiClient.GetJournalStudents(groupID, subjectID, qpropID)
 					if err != nil {
-						allLines = append(allLines, fmt.Sprintf("❌ Ошибка студентов: %v", err))
+						allLines = append(allLines, fmt.Sprintf("Ошибка студентов: %v", err))
 						continue
 					}
 
@@ -202,7 +204,7 @@ func (p *JournalPage) loadJournal() {
 
 					// Build journal display
 					allLines = append(allLines, "")
-					allLines = append(allLines, fmt.Sprintf("═══ %s | %s | %s ═══", groupName, subjectName, quarterName))
+					allLines = append(allLines, fmt.Sprintf("=== %s | %s | %s ===", groupName, subjectName, quarterName))
 					allLines = append(allLines, "")
 
 					// Header row with dates
@@ -215,7 +217,7 @@ func (p *JournalPage) loadJournal() {
 						header += dateStr + "\t"
 					}
 					allLines = append(allLines, header)
-					allLines = append(allLines, strings.Repeat("─", len(header)+20))
+					allLines = append(allLines, strings.Repeat("-", len(header)+20))
 
 					// Student rows
 					for _, student := range students {
@@ -232,10 +234,10 @@ func (p *JournalPage) loadJournal() {
 									display := engine.ParseGradeDisplay(markInfo.shortName, markInfo.markValue)
 									row += display + "\t"
 								} else {
-									row += "✓\t"
+									row += "+\t"
 								}
 							} else {
-								row += "—\t"
+								row += "-\t"
 							}
 						}
 
@@ -249,8 +251,10 @@ func (p *JournalPage) loadJournal() {
 			allLines = append(allLines, "Нет данных для отображения")
 		}
 
-		p.journalEntry.SetText(strings.Join(allLines, "\n"))
-		p.journalEntry.Refresh()
+		result := strings.Join(allLines, "\n")
+		fyne.Do(func() {
+			p.journalEntry.SetText(result)
+		})
 	}()
 }
 

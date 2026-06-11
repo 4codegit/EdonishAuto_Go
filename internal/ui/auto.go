@@ -50,13 +50,13 @@ func NewAutoGradePage(app *App) *AutoGradePage {
 func (p *AutoGradePage) Build() fyne.CanvasObject {
 	// ── Settings ────────────────────────────────────────────────
 	p.classSelect = widget.NewSelect([]string{"Все классы"}, func(s string) {})
-	p.classSelect.PlaceHolder = "Класс"
+	p.classSelect.PlaceHolder = "Выберите класс"
 
 	p.subjectSelect = widget.NewSelect([]string{"Все предметы"}, func(s string) {})
-	p.subjectSelect.PlaceHolder = "Предмет"
+	p.subjectSelect.PlaceHolder = "Выберите предмет"
 
 	p.quarterSelect = widget.NewSelect([]string{"Все четверти"}, func(s string) {})
-	p.quarterSelect.PlaceHolder = "Четверть"
+	p.quarterSelect.PlaceHolder = "Выберите четверть"
 
 	p.minGradeEntry = widget.NewEntry()
 	p.minGradeEntry.SetText(fmt.Sprintf("%d", config.MinGrade))
@@ -74,30 +74,32 @@ func (p *AutoGradePage) Build() fyne.CanvasObject {
 	p.quarterMarksChk.SetChecked(true)
 
 	gradeRange := container.NewHBox(
+		widget.NewLabel("от"),
 		p.minGradeEntry,
-		widget.NewLabel("—"),
+		widget.NewLabel("до"),
 		p.maxGradeEntry,
 	)
 
-	settingsCard := widget.NewCard("Настройки", "", container.NewVBox(
+	settingsCard := widget.NewCard("Настройки оценки", "", container.NewVBox(
 		container.NewGridWithColumns(2,
 			container.NewVBox(
+				widget.NewLabelWithStyle("Класс", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 				p.classSelect,
+				widget.NewLabelWithStyle("Четверть", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 				p.quarterSelect,
-				container.NewHBox(
-					widget.NewLabel("Воркеры:"),
-					p.workersEntry,
-				),
 			),
 			container.NewVBox(
+				widget.NewLabelWithStyle("Предмет", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 				p.subjectSelect,
-				container.NewHBox(
-					widget.NewLabel("Оценки:"),
-					gradeRange,
-				),
-				p.fillEmptyChk,
-				p.quarterMarksChk,
+				widget.NewLabelWithStyle("Диапазон оценок", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+				gradeRange,
 			),
+		),
+		widget.NewSeparator(),
+		container.NewGridWithColumns(3,
+			container.NewHBox(widget.NewLabel("Потоки:"), p.workersEntry),
+			p.fillEmptyChk,
+			p.quarterMarksChk,
 		),
 	))
 
@@ -131,7 +133,7 @@ func (p *AutoGradePage) Build() fyne.CanvasObject {
 	p.progressBar.Max = 1
 	p.statsLabel = widget.NewLabel("")
 
-	progressCard := widget.NewCard("", "", container.NewVBox(
+	progressCard := widget.NewCard("Прогресс", "", container.NewVBox(
 		p.progressLabel,
 		p.progressBar,
 		p.statsLabel,
@@ -139,7 +141,7 @@ func (p *AutoGradePage) Build() fyne.CanvasObject {
 
 	// ── Results ─────────────────────────────────────────────────
 	p.resultsEntry = widget.NewMultiLineEntry()
-	p.resultsEntry.SetPlaceHolder("Результаты анализа появятся здесь")
+	p.resultsEntry.SetPlaceHolder("Результаты анализа появятся здесь...\n\nНажмите «Анализировать» для начала")
 	p.resultsEntry.Wrapping = fyne.TextWrapWord
 	p.resultsEntry.SetMinRowsVisible(12)
 
@@ -201,9 +203,6 @@ func (p *AutoGradePage) UpdateProgress(plan *engine.GradePlan) {
 
 	p.progressLabel.SetText(fmt.Sprintf("Выполнение: %d/%d", completed+failed, total-int(skipped)))
 	p.statsLabel.SetText(fmt.Sprintf("Успешно: %d | Ошибки: %d | Пропущено: %d", completed, failed, skipped))
-	p.progressBar.Refresh()
-	p.progressLabel.Refresh()
-	p.statsLabel.Refresh()
 }
 
 // getSelectedGroups returns the groups matching the dropdown selection.
@@ -280,7 +279,9 @@ func (p *AutoGradePage) doAnalyze() {
 		)
 
 		p.app.currentPlan = plan
-		p.onAnalyzeComplete(plan)
+		fyne.Do(func() {
+			p.onAnalyzeComplete(plan)
+		})
 	}()
 }
 
@@ -292,9 +293,9 @@ func (p *AutoGradePage) onAnalyzeComplete(plan *engine.GradePlan) {
 
 	toExecute := plan.PendingCount()
 
-	lines := "════════════════════════════════════════════════════════\n"
+	lines := "==================================================\n"
 	lines += "  ПЛАН ОЦЕНОК\n"
-	lines += "════════════════════════════════════════════════════════\n\n"
+	lines += "==================================================\n\n"
 	lines += fmt.Sprintf("  Всего задач:      %d\n", plan.TotalTasks)
 	lines += fmt.Sprintf("  Будет выполнено:  %d\n", toExecute)
 	lines += fmt.Sprintf("  Пропущено:        %d\n\n", int(plan.Skipped))
@@ -324,8 +325,6 @@ func (p *AutoGradePage) onAnalyzeComplete(plan *engine.GradePlan) {
 
 	p.resultsEntry.SetText(lines)
 	p.progressLabel.SetText(fmt.Sprintf("Анализ завершён: %d оценок будет добавлено", toExecute))
-	p.resultsEntry.Refresh()
-	p.progressLabel.Refresh()
 }
 
 // doStart starts the grade execution.
@@ -368,7 +367,9 @@ func (p *AutoGradePage) doStart() {
 			}
 		}
 
-		p.onExecutionComplete()
+		fyne.Do(func() {
+			p.onExecutionComplete()
+		})
 	}()
 }
 
@@ -393,8 +394,6 @@ func (p *AutoGradePage) onExecutionComplete() {
 		p.statsLabel.SetText(fmt.Sprintf("Успешно: %d | Ошибки: %d | Пропущено: %d",
 			int(plan.Completed), int(plan.Failed), int(plan.Skipped)))
 	}
-	p.progressLabel.Refresh()
-	p.statsLabel.Refresh()
 }
 
 // parseInt safely parses an integer from a string.
