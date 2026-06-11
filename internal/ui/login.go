@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
@@ -77,7 +79,7 @@ func (p *LoginPage) Build() fyne.CanvasObject {
 
 // LoadSession loads saved session data into the form.
 func (p *LoginPage) LoadSession() {
-	loginID, password, remember := p.app.LoadSessionData()
+	loginID, password, remember, _ := p.app.LoadSessionData()
 	if loginID != "" {
 		p.loginEntry.SetText(loginID)
 	}
@@ -114,6 +116,14 @@ func (p *LoginPage) doLogin() {
 			p.loginBtn.Refresh()
 			return
 		}
-		p.app.showDashboard(userInfo)
+
+		// Apply saved school selection if available
+		_, _, _, savedSchoolID := p.app.LoadSessionData()
+		if savedSchoolID > 0 && p.app.apiClient.HasMultipleSchools() {
+			p.app.apiClient.SetSchool(savedSchoolID)
+			p.app.LogMessage(fmt.Sprintf("Восстановлена школа ID: %d", savedSchoolID), "info")
+		}
+
+		p.app.onLoginSuccess(userInfo)
 	}()
 }

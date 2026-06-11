@@ -38,16 +38,20 @@ type App struct {
 	loadingData bool
 
 	// UI Components
-	loginPage *LoginPage
-	autoPage  *AutoGradePage
-	journalPg *JournalPage
-	logsPage  *LogsPage
+	loginPage  *LoginPage
+	autoPage   *AutoGradePage
+	journalPg  *JournalPage
+	logsPage   *LogsPage
+	schoolPage *SchoolPage
 
 	// Tab container for navigation
 	tabs *container.AppTabs
 
 	// Status bar
 	statusLabel *widget.Label
+
+	// School selector in header
+	schoolSelect *widget.Select
 
 	// Log buffer
 	logMutex  sync.Mutex
@@ -77,6 +81,7 @@ func NewApp() *App {
 	a.autoPage = NewAutoGradePage(a)
 	a.journalPg = NewJournalPage(a)
 	a.loginPage = NewLoginPage(a)
+	a.schoolPage = NewSchoolPage(a)
 
 	// Show login
 	a.showLogin()
@@ -94,6 +99,25 @@ func (a *App) showLogin() {
 	a.mainWindow.SetContent(a.loginPage.Build())
 	a.mainWindow.Canvas().Focus(a.loginPage.loginEntry)
 	a.loginPage.LoadSession()
+}
+
+// onLoginSuccess handles the post-login flow.
+// If the user has multiple schools, show the school chooser;
+// otherwise go straight to the dashboard.
+func (a *App) onLoginSuccess(userInfo *api.UserInfo) {
+	if a.apiClient.HasMultipleSchools() {
+		a.showSchoolSelection()
+	} else {
+		a.showDashboard(userInfo)
+	}
+}
+
+// showSchoolSelection displays the school selection screen.
+func (a *App) showSchoolSelection() {
+	schools := a.apiClient.GetSchools()
+	content := a.schoolPage.SetSchools(schools)
+	a.mainWindow.SetContent(content)
+	a.LogMessage(fmt.Sprintf("Найдено %d школ — выберите школу", len(schools)), "info")
 }
 
 // showDashboard displays the main dashboard after login.
@@ -129,15 +153,35 @@ func (a *App) showDashboard(userInfo *api.UserInfo) {
 		a.onLogout()
 	})
 
-	header := container.NewHBox(
+	// School selector (only if multiple schools)
+	headerObjects := []fyne.CanvasObject{
 		widget.NewLabel(fmt.Sprintf("%s v%s", config.AppName, config.AppVersion)),
 		widget.NewSeparator(),
 		widget.NewLabel(userName),
 		widget.NewLabel(schoolInfo),
-		statusLabel,
-		themeBtn,
-		logoutBtn,
-	)
+	}
+
+	if a.apiClient.HasMultipleSchools() {
+		schoolOpts := make([]string, len(a.apiClient.GetSchools()))
+		for i, s := range a.apiClient.GetSchools() {
+			schoolOpts[i] = s.Name
+		}
+		a.schoolSelect = widget.NewSelect(schoolOpts, func(selected string) {
+			a.onSchoolChange(selected)
+		})
+		// Set current school as selected
+		for i, s := range a.apiClient.GetSchools() {
+			if s.ID == a.apiClient.SchoolID {
+				a.schoolSelect.SetSelectedIndex(i)
+				break
+			}
+		}
+		headerObjects = append(headerObjects, widget.NewLabel("Школа:"), a.schoolSelect)
+	}
+
+	headerObjects = append(headerObjects, statusLabel, themeBtn, logoutBtn)
+
+	header := container.NewHBox(headerObjects...)
 
 	content := container.NewBorder(header, nil, nil, nil, a.tabs)
 	a.mainWindow.SetContent(content)
@@ -145,6 +189,38 @@ func (a *App) showDashboard(userInfo *api.UserInfo) {
 	// Load initial data
 	a.LogMessage("Загрузка данных журнала...", "info")
 	go a.loadInitialData()
+}
+
+// onSchoolChange handles the school selector change.
+func (a *App) onSchoolChange(selected string) {
+	schools := a.apiClient.GetSchools()
+	for _, s := range schools {
+		if s.Name == selected {
+			if s.ID == a.apiClient.SchoolID {
+				return // already selected
+			}
+			a.apiClient.SetSchool(s.ID)
+			a.LogMessage(fmt.Sprintf("Переключение на школу: %s (ID: %d)", s.Name, s.ID), "info")
+			a.SaveSessionSchool(s.ID)
+
+			// Stop any running engine
+			if a.engine.IsRunning() {
+				a.engine.Stop()
+			}
+			a.currentPlan = nil
+
+			// Clear old data and reload
+			a.groupsData = nil
+			a.quartersData = nil
+			a.teacherSubjects = nil
+			a.autoPage.UpdateDropdowns()
+			a.journalPg.UpdateDropdowns()
+
+			// Update school info label
+			go a.loadInitialData()
+			return
+		}
+	}
 }
 
 // loadInitialData loads journal options and populates dropdowns.
@@ -286,9 +362,10 @@ func (a *App) ClearLogs() {
 // SaveSession saves login credentials to disk.
 func (a *App) SaveSession(loginID, password string, remember bool) {
 	data := map[string]interface{}{
-		"login_id": loginID,
-		"password": password,
-		"remember": remember,
+		"login_id":   loginID,
+		"password":   password,
+		"remember":   remember,
+		"school_id":  a.apiClient.SchoolID,
 	}
 	if !remember {
 		data["login_id"] = ""
@@ -298,19 +375,45 @@ func (a *App) SaveSession(loginID, password string, remember bool) {
 	_ = os.WriteFile(config.SessionFile(), fileData, 0600)
 }
 
-// LoadSessionData loads saved session from disk.
-func (a *App) LoadSessionData() (loginID, password string, remember bool) {
+// SaveSessionSchool saves the selected school ID to the session file.
+func (a *App) SaveSessionSchool(schoolID int) {
+	// Read existing session
 	data, err := os.ReadFile(config.SessionFile())
 	if err != nil {
-		return "", "", false
+		// Create a minimal session
+		session := map[string]interface{}{
+			"school_id": schoolID,
+		}
+		fileData, _ := json.MarshalIndent(session, "", "  ")
+		_ = os.WriteFile(config.SessionFile(), fileData, 0600)
+		return
+	}
+
+	var session map[string]interface{}
+	if err := json.Unmarshal(data, &session); err != nil {
+		session = make(map[string]interface{})
+	}
+	session["school_id"] = schoolID
+	fileData, _ := json.MarshalIndent(session, "", "  ")
+	_ = os.WriteFile(config.SessionFile(), fileData, 0600)
+}
+
+// LoadSessionData loads saved session from disk.
+func (a *App) LoadSessionData() (loginID, password string, remember bool, schoolID int) {
+	data, err := os.ReadFile(config.SessionFile())
+	if err != nil {
+		return "", "", false, 0
 	}
 	var session map[string]interface{}
 	if err := json.Unmarshal(data, &session); err != nil {
-		return "", "", false
+		return "", "", false, 0
 	}
 	loginID, _ = session["login_id"].(string)
 	password, _ = session["password"].(string)
 	remember, _ = session["remember"].(bool)
+	if sid, ok := session["school_id"].(float64); ok {
+		schoolID = int(sid)
+	}
 	return
 }
 
