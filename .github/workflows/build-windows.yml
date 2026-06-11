@@ -27,9 +27,15 @@ jobs:
       - name: Read version
         id: version
         run: |
-          $ver = (Select-String -Path "edonish-auto\internal\config\config.go" -Pattern 'AppVersion\s+=\s+"([^"]+)"').Matches.Groups[1].Value
-          echo "APP_VERSION=$ver" >> $env:GITHUB_OUTPUT
-          echo "Version: $ver"
+          $content = Get-Content "edonish-auto/internal/config/config.go" -Raw
+          if ($content -match 'AppVersion\s*=\s*"([^"]+)"') {
+            $ver = $Matches[1]
+            echo "APP_VERSION=$ver" >> $env:GITHUB_OUTPUT
+            echo "Version: $ver"
+          } else {
+            echo "APP_VERSION=0.4.0" >> $env:GITHUB_OUTPUT
+            echo "Version: 0.4.0 (fallback)"
+          }
         shell: pwsh
 
       - name: Build Windows binary
