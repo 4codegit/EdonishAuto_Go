@@ -18,7 +18,7 @@ jobs:
       - name: Read version from config
         id: version
         run: |
-          VERSION=$(grep 'AppVersion' edonish-auto/internal/config/config.go | awk -F'"' '{print $2}')
+          VERSION=$(grep 'AppVersion' internal/config/config.go | awk -F'"' '{print $2}')
           echo "APP_VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
@@ -39,8 +39,7 @@ jobs:
           sudo apt-get install -y libx11-dev libxext-dev libxrender-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxtst-dev libgtk-3-dev libgdk-pixbuf2.0-dev libgl1-mesa-dev libdbus-1-dev libatk1.0-dev libatk-bridge2.0-dev libatspi2.0-dev rpm dpkg-dev gcc libc6-dev
       - name: Build Linux binary
         run: |
-          cd edonish-auto
-          CGO_ENABLED=1 go build -ldflags "-s -w -X main.version=${{ env.APP_VERSION }}" -o ../dist/linux/edonish-auto .
+          CGO_ENABLED=1 go build -ldflags "-s -w -X main.version=${{ env.APP_VERSION }}" -o dist/linux/edonish-auto .
       - name: Report binary size
         run: |
           chmod +x dist/linux/edonish-auto
@@ -68,10 +67,9 @@ jobs:
         shell: pwsh
       - name: Build Windows binary
         run: |
-          cd edonish-auto
           $env:CGO_ENABLED="1"
           $env:CC="gcc"
-          go build -ldflags "-s -w -H windowsgui -X main.version=${{ env.APP_VERSION }}" -o ../dist/windows/edonish-auto.exe .
+          go build -ldflags "-s -w -H windowsgui -X main.version=${{ env.APP_VERSION }}" -o dist/windows/edonish-auto.exe .
         shell: pwsh
       - name: Create ZIP package
         run: |
@@ -96,8 +94,7 @@ jobs:
           go-version: '1.22'
       - name: Build macOS binary
         run: |
-          cd edonish-auto
-          CGO_ENABLED=1 go build -ldflags "-s -w -X main.version=${{ env.APP_VERSION }}" -o ../dist/macos/edonish-auto .
+          CGO_ENABLED=1 go build -ldflags "-s -w -X main.version=${{ env.APP_VERSION }}" -o dist/macos/edonish-auto .
       - name: Create ZIP package
         run: |
           chmod +x dist/macos/edonish-auto
