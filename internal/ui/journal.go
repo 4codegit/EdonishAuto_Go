@@ -122,6 +122,12 @@ func (p *JournalPage) Build() fyne.CanvasObject {
 
 // onModeChange switches between table and analysis mode.
 func (p *JournalPage) onModeChange(mode string) {
+        // Guard: widgets may not be created yet when SetSelectedIndex triggers
+        // the callback during Build().
+        if p.journalCard == nil || p.analysisCard == nil {
+                return
+        }
+
         switch mode {
         case "Анализ ученика":
                 p.journalCard.Hide()

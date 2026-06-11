@@ -32,7 +32,8 @@ func NewLoginPage(app *App) *LoginPage {
 func (p *LoginPage) Build() fyne.CanvasObject {
         p.loginEntry = widget.NewEntry()
         p.loginEntry.SetPlaceHolder("Логин (ID телефона)")
-        p.loginEntry.Wrapping = fyne.TextWrapWord
+        // NOTE: Do NOT set Wrapping on a single-line Entry — Fyne will
+        // panic with "Entry cannot wrap single line".
 
         p.passEntry = widget.NewPasswordEntry()
         p.passEntry.SetPlaceHolder("Пароль")
