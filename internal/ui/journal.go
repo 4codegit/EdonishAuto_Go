@@ -1194,10 +1194,11 @@ func (p *JournalPage) showLimitsDialog() {
                 }
         })
 
-        setAllRow := container.NewGridWithColumns(3,
+        setAllRow := container.NewGridWithColumns(4,
                 container.NewHBox(widget.NewIcon(theme.ContentAddIcon()), widget.NewLabel("Установить всем")),
                 allMinEntry,
                 allMaxEntry,
+                setAllBtn,
         )
         entries = append(entries, setAllRow)
         entries = append(entries, widget.NewSeparator())
@@ -1350,10 +1351,11 @@ func (p *JournalPage) showRandomFillDialog() {
                 }
         })
 
-        setAllRow := container.NewGridWithColumns(3,
+        setAllRow := container.NewGridWithColumns(4,
                 container.NewHBox(widget.NewIcon(theme.ContentAddIcon()), widget.NewLabel("Установить всем")),
                 allMinEntry,
                 allMaxEntry,
+                setAllBtn,
         )
         entries = append(entries, setAllRow)
         entries = append(entries, widget.NewSeparator())
