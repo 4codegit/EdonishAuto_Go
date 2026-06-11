@@ -9,8 +9,8 @@ import (
 // Application metadata
 const (
 	AppName    = "eDonish Auto"
-	AppVersion = "0.2.0"
-	Signature  = "by 4code"
+	AppVersion = "0.3.0"
+	Signature  = "eDonish Auto by 4code"
 )
 
 // API base configuration
@@ -54,9 +54,9 @@ const (
 
 // Language codes
 const (
-	LangTJ = 1 // Тоҷикӣ
-	LangRU = 2 // Русский
-	LangEN = 3 // English
+	LangTJ = 1
+	LangRU = 2
+	LangEN = 3
 )
 
 // Grade settings
