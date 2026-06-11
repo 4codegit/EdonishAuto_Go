@@ -384,6 +384,7 @@ func (e *Engine) ExecutePlan(plan *GradePlan, numWorkers int, taskDelay time.Dur
                                         task.Mark,
                                         8, // default mark_type_id
                                         task.QuarterPropertyID,
+                                        config.Signature,
                                 )
 
                                 if err != nil {
