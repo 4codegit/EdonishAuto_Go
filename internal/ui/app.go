@@ -98,15 +98,23 @@ func NewApp() *App {
         a.rootContainer = container.NewStack(loginContent)
         a.mainWindow.SetContent(a.rootContainer)
 
-        // Focus login entry and load session
-        a.mainWindow.Canvas().Focus(a.loginPage.loginEntry)
-        a.loginPage.LoadSession()
+        // NOTE: Focus() and LoadSession() must NOT be called here because
+        // the window has not been shown yet — Canvas().Focus() panics if
+        // called before ShowAndRun(). They are deferred to Run() instead.
 
         return a
 }
 
 // Run starts the application event loop.
 func (a *App) Run() {
+        // Schedule focus and session loading AFTER the window is shown.
+        // Focus() panics if called before the window is visible.
+        go func() {
+                fyne.Do(func() {
+                        a.mainWindow.Canvas().Focus(a.loginPage.loginEntry)
+                        a.loginPage.LoadSession()
+                })
+        }()
         a.mainWindow.ShowAndRun()
 }
 
@@ -121,8 +129,12 @@ func (a *App) setPage(obj fyne.CanvasObject) {
 // showLogin displays the login screen.
 func (a *App) showLogin() {
         a.setPage(a.loginPage.Build())
-        a.mainWindow.Canvas().Focus(a.loginPage.loginEntry)
-        a.loginPage.LoadSession()
+        // Focus must be scheduled via fyne.Do to ensure it runs on the UI goroutine
+        // and after the page is fully rendered.
+        fyne.Do(func() {
+                a.mainWindow.Canvas().Focus(a.loginPage.loginEntry)
+                a.loginPage.LoadSession()
+        })
 }
 
 // onLoginSuccess handles the post-login flow.
