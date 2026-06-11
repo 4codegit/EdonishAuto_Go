@@ -1,9 +1,11 @@
 // Package engine implements the grade automation engine with concurrent workers.
+// v0.4.0: Smart grading based on student analysis, not random.
 package engine
 
 import (
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -24,6 +26,17 @@ const (
 	StatusSkipped
 )
 
+// TaskType represents what kind of grade task this is.
+type TaskType int
+
+const (
+	TaskDaily    TaskType = iota // Daily mark (for a specific date)
+	TaskQuarter                  // Quarter mark
+	TaskSemester                 // Semester mark
+	TaskYear                     // Year mark
+	TaskSignature                // Signature/подпись for a date
+)
+
 // GradeTask represents a single grade creation task.
 type GradeTask struct {
 	StudentID         int
@@ -36,6 +49,10 @@ type GradeTask struct {
 	GroupName         string
 	Status            TaskStatus
 	Error             string
+	TaskType          TaskType
+	// For quarter/semester/year marks
+	SemesterPropertyID int
+	YearPropertyID     int
 }
 
 // GradePlan represents a complete plan for grade creation.
@@ -121,8 +138,7 @@ func (e *Engine) IsRunning() bool {
 func (e *Engine) Stop() {
 	e.running.Store(false)
 	close(e.stopChan)
-	e.log("Остановка двигателя оценок...", "warning")
-	// Recreate stop channel for next run
+	e.log("Остановка...", "warning")
 	e.stopChan = make(chan struct{})
 }
 
@@ -145,7 +161,157 @@ func (e *Engine) updateProgress(plan *GradePlan) {
 	}
 }
 
+// ─── Smart Grade Calculation ─────────────────────────────────────
+
+// StudentAnalysis holds the analysis of a student's existing grades.
+type StudentAnalysis struct {
+	StudentID   int
+	StudentName string
+	ExistingGrades []int  // All existing numeric grades
+	Average     float64  // Average of existing grades
+	GradeCount  int      // Number of existing grades
+	Min         int      // Minimum existing grade
+	Max         int      // Maximum existing grade
+	Missing     int      // Number of missing grades
+}
+
+// SmartGrade calculates a grade for a student based on their existing performance.
+// Instead of random, it uses the student's average as the base and adds controlled variation.
+// The grade is guaranteed to be within [minGrade, maxGrade].
+func SmartGrade(analysis *StudentAnalysis, minGrade, maxGrade int) int {
+	if analysis.GradeCount == 0 {
+		// No existing grades — use the middle of the range with slight variation
+		mid := (minGrade + maxGrade) / 2
+		variation := rand.Intn(2) // 0 or 1
+		if rand.Intn(2) == 0 {
+			variation = -variation
+		}
+		grade := mid + variation
+		return clampGrade(grade, minGrade, maxGrade)
+	}
+
+	// Base the grade on the student's average
+	avg := analysis.Average
+
+	// Add controlled variation: ±1 or ±2 around the average
+	// This makes grades look natural but consistent with the student's level
+	variation := 0
+	r := rand.Intn(100)
+	switch {
+	case r < 40: // 40% chance: exact average
+		variation = 0
+	case r < 70: // 30% chance: +1
+		variation = 1
+	case r < 85: // 15% chance: -1
+		variation = -1
+	case r < 93: // 8% chance: +2
+		variation = 2
+	case r < 98: // 5% chance: -2
+		variation = -2
+	default: // 2% chance: bigger swing
+		variation = rand.Intn(3) - 1 // -1, 0, 1
+	}
+
+	grade := int(math.Round(avg)) + variation
+	return clampGrade(grade, minGrade, maxGrade)
+}
+
+// CalculateQuarterMark calculates the quarter mark based on daily grades.
+// It rounds the average and ensures it's within the specified range.
+func CalculateQuarterMark(analysis *StudentAnalysis, minGrade, maxGrade int) int {
+	if analysis.GradeCount == 0 {
+		// No daily grades — use the middle of the range
+		return (minGrade + maxGrade) / 2
+	}
+
+	// Round the average to nearest integer
+	grade := int(math.Round(analysis.Average))
+
+	// Slight bump up (quarter marks tend to be rounded up)
+	if analysis.Average-float64(grade) >= -0.3 {
+		grade = int(math.Ceil(analysis.Average))
+	}
+
+	return clampGrade(grade, minGrade, maxGrade)
+}
+
+// CalculateSemesterMark calculates the semester mark from quarter averages.
+func CalculateSemesterMark(quarterAverages []float64, minGrade, maxGrade int) int {
+	if len(quarterAverages) == 0 {
+		return (minGrade + maxGrade) / 2
+	}
+	sum := 0.0
+	for _, q := range quarterAverages {
+		sum += q
+	}
+	avg := sum / float64(len(quarterAverages))
+	grade := int(math.Round(avg))
+	return clampGrade(grade, minGrade, maxGrade)
+}
+
+// CalculateYearMark calculates the year mark from semester averages.
+func CalculateYearMark(semesterAverages []float64, minGrade, maxGrade int) int {
+	if len(semesterAverages) == 0 {
+		return (minGrade + maxGrade) / 2
+	}
+	sum := 0.0
+	for _, q := range semesterAverages {
+		sum += q
+	}
+	avg := sum / float64(len(semesterAverages))
+	grade := int(math.Round(avg))
+	return clampGrade(grade, minGrade, maxGrade)
+}
+
+// clampGrade ensures grade is within [min, max].
+func clampGrade(grade, min, max int) int {
+	if grade < min {
+		return min
+	}
+	if grade > max {
+		return max
+	}
+	return grade
+}
+
+// AnalyzeStudent creates an analysis of a student's existing grades.
+func AnalyzeStudent(student map[string]interface{}) *StudentAnalysis {
+	a := &StudentAnalysis{
+		StudentID:   intField(student, "studentId"),
+		StudentName: fmt.Sprintf("%s %s", stringField(student, "lastName"), stringField(student, "firstName")),
+	}
+
+	existingMarks := ExtractExistingMarksWithValues(student)
+	for _, val := range existingMarks {
+		if val > 0 {
+			a.ExistingGrades = append(a.ExistingGrades, val)
+		}
+	}
+
+	a.GradeCount = len(a.ExistingGrades)
+	if a.GradeCount > 0 {
+		sum := 0
+		a.Min = a.ExistingGrades[0]
+		a.Max = a.ExistingGrades[0]
+		for _, g := range a.ExistingGrades {
+			sum += g
+			if g < a.Min {
+				a.Min = g
+			}
+			if g > a.Max {
+				a.Max = g
+			}
+		}
+		a.Average = float64(sum) / float64(a.GradeCount)
+	}
+
+	return a
+}
+
+// ─── Build Complete Grade Plan ──────────────────────────────────
+
 // BuildGradePlan builds a complete plan of grades to create.
+// Uses smart grading based on student analysis instead of random.
 func (e *Engine) BuildGradePlan(
 	groups []map[string]interface{},
 	subjects []map[string]interface{},
@@ -154,7 +320,7 @@ func (e *Engine) BuildGradePlan(
 	fillEmptyOnly bool,
 ) *GradePlan {
 	plan := NewGradePlan()
-	e.log("Построение плана оценок...", "info")
+	e.log("Построение плана оценок (умный режим)...", "info")
 
 	for _, group := range groups {
 		groupID := intField(group, "id")
@@ -179,37 +345,33 @@ func (e *Engine) BuildGradePlan(
 
 				e.log(fmt.Sprintf("%s | %s | %s", groupName, subjectName, quarterName), "info")
 
-				// Get dates for this combination
+				// Get dates
 				datesData, err := e.api.GetJournalDates(groupID, subjectID, qpropID)
 				if err != nil {
-					e.log(fmt.Sprintf("  Ошибка получения дат: %v", err), "error")
+					e.log(fmt.Sprintf("  Ошибка дат: %v", err), "error")
 					continue
 				}
-
 				days := ExtractDays(datesData)
 				if len(days) == 0 {
-					e.log("  Нет дат для этой комбинации", "info")
+					e.log("  Нет дат", "info")
 					continue
 				}
 
 				// Get students
 				studentsData, err := e.api.GetJournalStudents(groupID, subjectID, qpropID)
 				if err != nil {
-					e.log(fmt.Sprintf("  Ошибка получения студентов: %v", err), "error")
+					e.log(fmt.Sprintf("  Ошибка студентов: %v", err), "error")
 					continue
 				}
-
 				students := ExtractStudents(studentsData)
 				if len(students) == 0 {
 					e.log("  Нет студентов", "info")
 					continue
 				}
 
-				// Plan grades for each student/date
+				// Plan grades for each student
 				for _, student := range students {
-					studentID := intField(student, "studentId")
-					studentName := fmt.Sprintf("%s %s", stringField(student, "lastName"), stringField(student, "firstName"))
-
+					analysis := AnalyzeStudent(student)
 					existingMarks := ExtractExistingMarks(student)
 
 					for _, day := range days {
@@ -219,8 +381,8 @@ func (e *Engine) BuildGradePlan(
 						if fillEmptyOnly {
 							if _, hasMark := existingMarks[dateID]; hasMark {
 								task := &GradeTask{
-									StudentID:         studentID,
-									StudentName:       studentName,
+									StudentID:         analysis.StudentID,
+									StudentName:       analysis.StudentName,
 									AssignmentDateID:  dateID,
 									DateStr:           dateStr,
 									QuarterPropertyID: qpropID,
@@ -228,6 +390,7 @@ func (e *Engine) BuildGradePlan(
 									SubjectName:       subjectName,
 									GroupName:         groupName,
 									Status:            StatusSkipped,
+									TaskType:          TaskDaily,
 								}
 								plan.AddTask(task)
 								atomic.AddInt32(&plan.Skipped, 1)
@@ -235,10 +398,11 @@ func (e *Engine) BuildGradePlan(
 							}
 						}
 
-						grade := minGrade + rand.Intn(maxGrade-minGrade+1)
+						// Smart grade based on student analysis
+						grade := SmartGrade(analysis, minGrade, maxGrade)
 						task := &GradeTask{
-							StudentID:         studentID,
-							StudentName:       studentName,
+							StudentID:         analysis.StudentID,
+							StudentName:       analysis.StudentName,
 							AssignmentDateID:  dateID,
 							DateStr:           dateStr,
 							QuarterPropertyID: qpropID,
@@ -246,6 +410,7 @@ func (e *Engine) BuildGradePlan(
 							SubjectName:       subjectName,
 							GroupName:         groupName,
 							Status:            StatusPending,
+							TaskType:          TaskDaily,
 						}
 						plan.AddTask(task)
 					}
@@ -254,11 +419,218 @@ func (e *Engine) BuildGradePlan(
 		}
 	}
 
-	e.log(fmt.Sprintf("План построен: %d задач (%d пропущено)", plan.TotalTasks, int(atomic.LoadInt32(&plan.Skipped))), "info")
+	e.log(fmt.Sprintf("План: %d задач (%d пропущено)", plan.TotalTasks, int(atomic.LoadInt32(&plan.Skipped))), "info")
 	return plan
 }
 
-// BuildGradePlanForQuarterMarks builds a plan for quarter/semester/year marks.
+// BuildCompletePlan builds a FULL plan: daily + quarter + semester + year marks.
+// This fills EVERYTHING for the selected groups/subjects/quarters.
+func (e *Engine) BuildCompletePlan(
+	groups []map[string]interface{},
+	subjects []map[string]interface{},
+	quarters []map[string]interface{},
+	minGrade, maxGrade int,
+	fillEmptyOnly bool,
+	includeDaily bool,
+	includeQuarter bool,
+	includeSemester bool,
+	includeYear bool,
+) *GradePlan {
+	plan := NewGradePlan()
+	e.log("Построение полного плана (дневные + четвертные + семестровые + годовые)...", "info")
+
+	for _, group := range groups {
+		groupID := intField(group, "id")
+		groupName := fmt.Sprintf("%s%s", stringField(group, "number"), stringField(group, "name"))
+
+		for _, subject := range subjects {
+			subjectID := intField(subject, "subjectId")
+			if subjectID == 0 {
+				subjectID = intField(subject, "id")
+			}
+			subjectName := stringField(subject, "subjectName")
+			if subjectName == "" {
+				subjectName = stringField(subject, "name")
+			}
+
+			for _, quarter := range quarters {
+				qpropID := intField(quarter, "qpropId")
+				quarterName := stringField(quarter, "name")
+				if quarterName == "" {
+					quarterName = fmt.Sprintf("Четверть %d", qpropID)
+				}
+
+				e.log(fmt.Sprintf("%s | %s | %s", groupName, subjectName, quarterName), "info")
+
+				datesData, err := e.api.GetJournalDates(groupID, subjectID, qpropID)
+				if err != nil {
+					e.log(fmt.Sprintf("  Ошибка дат: %v", err), "error")
+					continue
+				}
+				days := ExtractDays(datesData)
+
+				studentsData, err := e.api.GetJournalStudents(groupID, subjectID, qpropID)
+				if err != nil {
+					e.log(fmt.Sprintf("  Ошибка студентов: %v", err), "error")
+					continue
+				}
+				students := ExtractStudents(studentsData)
+
+				if len(students) == 0 {
+					continue
+				}
+
+				// ── Daily marks ──
+				if includeDaily && len(days) > 0 {
+					for _, student := range students {
+						analysis := AnalyzeStudent(student)
+						existingMarks := ExtractExistingMarks(student)
+
+						for _, day := range days {
+							dateID := stringField(day, "assignmentDateId")
+							dateStr := stringField(day, "assignmentDate")
+
+							if fillEmptyOnly {
+								if _, hasMark := existingMarks[dateID]; hasMark {
+									task := &GradeTask{
+										StudentID:         analysis.StudentID,
+										StudentName:       analysis.StudentName,
+										AssignmentDateID:  dateID,
+										DateStr:           dateStr,
+										QuarterPropertyID: qpropID,
+										Mark:              0,
+										SubjectName:       subjectName,
+										GroupName:         groupName,
+										Status:            StatusSkipped,
+										TaskType:          TaskDaily,
+									}
+									plan.AddTask(task)
+									atomic.AddInt32(&plan.Skipped, 1)
+									continue
+								}
+							}
+
+							grade := SmartGrade(analysis, minGrade, maxGrade)
+							task := &GradeTask{
+								StudentID:         analysis.StudentID,
+								StudentName:       analysis.StudentName,
+								AssignmentDateID:  dateID,
+								DateStr:           dateStr,
+								QuarterPropertyID: qpropID,
+								Mark:              grade,
+								SubjectName:       subjectName,
+								GroupName:         groupName,
+								Status:            StatusPending,
+								TaskType:          TaskDaily,
+							}
+							plan.AddTask(task)
+						}
+					}
+				}
+
+				// ── Quarter marks ──
+				if includeQuarter {
+					for _, student := range students {
+						analysis := AnalyzeStudent(student)
+
+						if fillEmptyOnly && hasQuarterMark(student) {
+							continue
+						}
+
+						grade := CalculateQuarterMark(analysis, minGrade, maxGrade)
+						task := &GradeTask{
+							StudentID:         analysis.StudentID,
+							StudentName:       analysis.StudentName,
+							QuarterPropertyID: qpropID,
+							DateStr:           quarterName,
+							Mark:              grade,
+							SubjectName:       subjectName,
+							GroupName:         groupName,
+							Status:            StatusPending,
+							TaskType:          TaskQuarter,
+						}
+						plan.AddTask(task)
+					}
+				}
+
+				// ── Semester marks ──
+				if includeSemester {
+					semesterPropID := intField(quarter, "spropId")
+					if semesterPropID == 0 {
+						// Try to extract from quarter data
+						semesterPropID = intField(quarter, "semesterPropertyId")
+					}
+					if semesterPropID > 0 {
+						for _, student := range students {
+							analysis := AnalyzeStudent(student)
+							grade := CalculateQuarterMark(analysis, minGrade, maxGrade)
+							task := &GradeTask{
+								StudentID:          analysis.StudentID,
+								StudentName:        analysis.StudentName,
+								SemesterPropertyID: semesterPropID,
+								QuarterPropertyID:  qpropID,
+								DateStr:            "Семестр",
+								Mark:               grade,
+								SubjectName:        subjectName,
+								GroupName:          groupName,
+								Status:             StatusPending,
+								TaskType:           TaskSemester,
+							}
+							plan.AddTask(task)
+						}
+					}
+				}
+
+				// ── Year marks ──
+				if includeYear {
+					yearPropID := intField(quarter, "ypropId")
+					if yearPropID == 0 {
+						yearPropID = intField(quarter, "yearPropertyId")
+					}
+					if yearPropID > 0 {
+						for _, student := range students {
+							analysis := AnalyzeStudent(student)
+							grade := CalculateQuarterMark(analysis, minGrade, maxGrade)
+							task := &GradeTask{
+								StudentID:         analysis.StudentID,
+								StudentName:       analysis.StudentName,
+								YearPropertyID:    yearPropID,
+								QuarterPropertyID: qpropID,
+								DateStr:           "Год",
+								Mark:              grade,
+								SubjectName:       subjectName,
+								GroupName:         groupName,
+								Status:            StatusPending,
+								TaskType:          TaskYear,
+							}
+							plan.AddTask(task)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	e.log(fmt.Sprintf("Полный план: %d задач (%d пропущено)", plan.TotalTasks, int(atomic.LoadInt32(&plan.Skipped))), "info")
+	return plan
+}
+
+// hasQuarterMark checks if a student already has a quarter mark.
+func hasQuarterMark(student map[string]interface{}) bool {
+	if qm := getMapField(student, "quarterMark"); qm != nil {
+		if arr, ok := qm.([]interface{}); ok && len(arr) > 0 {
+			if first, ok := arr[0].(map[string]interface{}); ok {
+				if sn := stringField(first, "shortName"); sn != "" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// BuildGradePlanForQuarterMarks builds a plan for quarter marks only.
+// Uses smart grading based on student's daily grades average.
 func (e *Engine) BuildGradePlanForQuarterMarks(
 	groups []map[string]interface{},
 	subjects []map[string]interface{},
@@ -267,7 +639,7 @@ func (e *Engine) BuildGradePlanForQuarterMarks(
 	fillEmptyOnly bool,
 ) *GradePlan {
 	plan := NewGradePlan()
-	e.log("Построение плана четвертных/семестровых/годовых оценок...", "info")
+	e.log("Построение плана четвертных оценок (умный режим)...", "info")
 
 	for _, group := range groups {
 		groupID := intField(group, "id")
@@ -292,36 +664,28 @@ func (e *Engine) BuildGradePlanForQuarterMarks(
 					e.log(fmt.Sprintf("  Ошибка: %v", err), "error")
 					continue
 				}
-
 				students := ExtractStudents(studentsData)
-				for _, student := range students {
-					studentID := intField(student, "studentId")
-					studentName := fmt.Sprintf("%s %s", stringField(student, "lastName"), stringField(student, "firstName"))
 
-					// Check if quarter mark already exists
-					if fillEmptyOnly {
-						if qm := getMapField(student, "quarterMark"); qm != nil {
-							if arr, ok := qm.([]interface{}); ok && len(arr) > 0 {
-								if first, ok := arr[0].(map[string]interface{}); ok {
-									if sn := stringField(first, "shortName"); sn != "" {
-										continue
-									}
-								}
-							}
-						}
+				for _, student := range students {
+					analysis := AnalyzeStudent(student)
+
+					if fillEmptyOnly && hasQuarterMark(student) {
+						continue
 					}
 
-					grade := minGrade + rand.Intn(maxGrade-minGrade+1)
+					// Calculate quarter mark from daily grades average
+					grade := CalculateQuarterMark(analysis, minGrade, maxGrade)
+
 					task := &GradeTask{
-						StudentID:         studentID,
-						StudentName:       studentName,
-						AssignmentDateID:  "",
-						DateStr:           quarterName,
+						StudentID:         analysis.StudentID,
+						StudentName:       analysis.StudentName,
 						QuarterPropertyID: qpropID,
+						DateStr:           quarterName,
 						Mark:              grade,
 						SubjectName:       subjectName,
 						GroupName:         groupName,
 						Status:            StatusPending,
+						TaskType:          TaskQuarter,
 					}
 					plan.AddTask(task)
 				}
@@ -329,9 +693,11 @@ func (e *Engine) BuildGradePlanForQuarterMarks(
 		}
 	}
 
-	e.log(fmt.Sprintf("План построен: %d четвертных оценок", plan.TotalTasks), "info")
+	e.log(fmt.Sprintf("План: %d четвертных оценок", plan.TotalTasks), "info")
 	return plan
 }
+
+// ─── Execute Plans ──────────────────────────────────────────────
 
 // ExecutePlan executes the grade plan with parallel workers.
 func (e *Engine) ExecutePlan(plan *GradePlan, numWorkers int, taskDelay time.Duration) {
@@ -352,7 +718,6 @@ func (e *Engine) ExecutePlan(plan *GradePlan, numWorkers int, taskDelay time.Dur
 
 	e.log(fmt.Sprintf("Запуск %d задач с %d воркерами...", len(tasks), numWorkers), "info")
 
-	// Distribute tasks across workers
 	workerTasks := make([][]*GradeTask, numWorkers)
 	for i, t := range tasks {
 		workerIdx := i % numWorkers
@@ -378,14 +743,47 @@ func (e *Engine) ExecutePlan(plan *GradePlan, numWorkers int, taskDelay time.Dur
 				task.Status = StatusRunning
 				e.updateProgress(plan)
 
-				result, err := e.api.CreateMark(
-					task.StudentID,
-					task.AssignmentDateID,
-					task.Mark,
-					8, // default mark_type_id
-					task.QuarterPropertyID,
-					config.Signature,
-				)
+				var result interface{}
+				var err error
+
+				switch task.TaskType {
+				case TaskDaily:
+					result, err = e.api.CreateMark(
+						task.StudentID,
+						task.AssignmentDateID,
+						task.Mark,
+						8, // mark_type_id
+						task.QuarterPropertyID,
+						config.Signature,
+					)
+				case TaskQuarter:
+					result, err = e.api.CreateQuarterMark(
+						task.StudentID,
+						task.QuarterPropertyID,
+						task.Mark,
+					)
+				case TaskSemester:
+					result, err = e.api.CreateSemesterMark(
+						task.StudentID,
+						task.SemesterPropertyID,
+						task.Mark,
+					)
+				case TaskYear:
+					result, err = e.api.CreateYearMark(
+						task.StudentID,
+						task.YearPropertyID,
+						task.Mark,
+					)
+				default:
+					result, err = e.api.CreateMark(
+						task.StudentID,
+						task.AssignmentDateID,
+						task.Mark,
+						8,
+						task.QuarterPropertyID,
+						config.Signature,
+					)
+				}
 
 				if err != nil {
 					task.Status = StatusError
@@ -401,16 +799,17 @@ func (e *Engine) ExecutePlan(plan *GradePlan, numWorkers int, taskDelay time.Dur
 					} else {
 						task.Status = StatusSuccess
 						atomic.AddInt32(&plan.Completed, 1)
-						e.log(fmt.Sprintf("  [%d] %s -> %d (%s)", workerID, task.StudentName, task.Mark, task.DateStr), "info")
+						typeLabel := taskTypeLabel(task.TaskType)
+						e.log(fmt.Sprintf("  [%d] %s -> %d (%s, %s)", workerID, task.StudentName, task.Mark, task.DateStr, typeLabel), "info")
 					}
 				} else {
 					task.Status = StatusSuccess
 					atomic.AddInt32(&plan.Completed, 1)
-					e.log(fmt.Sprintf("  [%d] %s -> %d (%s)", workerID, task.StudentName, task.Mark, task.DateStr), "info")
+					typeLabel := taskTypeLabel(task.TaskType)
+					e.log(fmt.Sprintf("  [%d] %s -> %d (%s, %s)", workerID, task.StudentName, task.Mark, task.DateStr, typeLabel), "info")
 				}
 
 				e.updateProgress(plan)
-
 				if e.running.Load() {
 					time.Sleep(taskDelay)
 				}
@@ -440,7 +839,7 @@ func (e *Engine) ExecuteQuarterMarks(plan *GradePlan, taskDelay time.Duration) {
 	}
 
 	if len(tasks) == 0 {
-		e.log("Нет четвертных оценок для выставления", "info")
+		e.log("Нет четвертных оценок", "info")
 		return
 	}
 
@@ -475,7 +874,24 @@ func (e *Engine) ExecuteQuarterMarks(plan *GradePlan, taskDelay time.Duration) {
 
 	completed := int(atomic.LoadInt32(&plan.Completed))
 	failed := int(atomic.LoadInt32(&plan.Failed))
-	e.log(fmt.Sprintf("Четвертные оценки: %d успешно, %d ошибок", completed, failed), "info")
+	e.log(fmt.Sprintf("Четвертные: %d успешно, %d ошибок", completed, failed), "info")
+}
+
+func taskTypeLabel(t TaskType) string {
+	switch t {
+	case TaskDaily:
+		return "дневная"
+	case TaskQuarter:
+		return "четвертная"
+	case TaskSemester:
+		return "семестровая"
+	case TaskYear:
+		return "годовая"
+	case TaskSignature:
+		return "подпись"
+	default:
+		return "оценка"
+	}
 }
 
 // ─── Data extraction helpers ─────────────────────────────────────────
@@ -527,6 +943,23 @@ func ExtractExistingMarks(student map[string]interface{}) map[string]bool {
 				dateID := stringField(mm, "assignmentDateId")
 				if dateID != "" {
 					marks[dateID] = true
+				}
+			}
+		}
+	}
+	return marks
+}
+
+// ExtractExistingMarksWithValues extracts existing marks with their numeric values.
+func ExtractExistingMarksWithValues(student map[string]interface{}) map[string]int {
+	marks := make(map[string]int)
+	if subjectMarks, ok := student["subjectMarks"].([]interface{}); ok {
+		for _, m := range subjectMarks {
+			if mm, ok := m.(map[string]interface{}); ok {
+				dateID := stringField(mm, "assignmentDateId")
+				markVal := intField(mm, "mark")
+				if dateID != "" && markVal > 0 {
+					marks[dateID] = markVal
 				}
 			}
 		}
