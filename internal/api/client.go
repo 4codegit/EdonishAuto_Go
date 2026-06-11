@@ -479,13 +479,14 @@ func (c *Client) GetJournalStudents(groupID, subjectID, quarterPropertyID int) (
 }
 
 // CreateMark creates a mark for a student on a specific date.
-func (c *Client) CreateMark(studentID int, assignmentDateID string, mark, markTypeID, quarterPropertyID int) (interface{}, error) {
+func (c *Client) CreateMark(studentID int, assignmentDateID string, mark, markTypeID, quarterPropertyID int, description string) (interface{}, error) {
         body := map[string]interface{}{
                 "mark_type_id":                  markTypeID,
                 "group_subgroup_student_id":     studentID,
                 "schedule_date_id":              assignmentDateID,
                 "quarter_property_id":           quarterPropertyID,
                 "mark":                          mark,
+                "signature":                     description,
         }
         return c.doRequestWithParams("POST", c.url(config.JournalMarkCreate, true), map[string]interface{}{
                 "school_id": c.SchoolID,
