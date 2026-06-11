@@ -143,3 +143,42 @@ Stage Summary:
 - Н/А grades now correctly display as "Н/А" instead of "1"
 - Logs are now copyable (text mode + clipboard button)
 - Topics use correct per-group quarter IDs
+
+---
+Task ID: 6
+Agent: Main
+Task: Исправить баг с четвертями в Go журнале, модернизировать UI Go приложения, добавить Tab/Delete навигацию, рандом с min-max для учеников
+
+Work Log:
+- Проанализирован весь код Go приложения (journal.go, auto.go, app.go, grade.go, config.go)
+- Найден корневой баг: Go версия загружала четверти из GetQuarters() API (school_admin/v1), а не из journal_options (group-specific), что давало неправильные qpropId
+- Исправлено: loadInitialData() теперь извлекает четверти из journal_options groups (как Python), с fallback на GetQuarters()
+- Исправлено: getSelectedQuarters() в journal.go теперь принимает group параметр и использует group-specific quarters
+- Исправлено: getSelectedQuarters() в auto.go аналогично обновлен
+- Полностью переписан journal.go (1845 строк):
+  - Современный UI с цветными ячейками (canvas.Text вместо widget.Label)
+  - Цветовая кодировка оценок: зелёный (9-10), серый (7-8), оранжевый (5-6), красный (1-4)
+  - Навигация клавиатурой: Tab, стрелки, Delete, Enter, цифры 1-9 для быстрой оценки
+  - Кнопка "Рандом" с диалогом min-max для каждого ученика
+  - Улучшен диалог пределов оценок с заголовками и "Установить всем"
+  - Быстрая установка оценки клавишами 1-9 (quickSetGrade)
+  - Кнопки 1-10 в диалоге редактирования
+- Модернизирован auto.go (638 строк):
+  - Цветной заголовок, прогресс и статус
+  - Интеграция с student limits из журнала
+  - Кнопка "Пределы учеников"
+- Модернизирован app.go (603 строк):
+  - Цветной заголовок приложения, роль, аватар
+  - Иконки для табов
+- Обновлен grade.go (1035 строк):
+  - Per-student min/max limits в SmartGrade
+  - SetStudentLimits() метод для Engine
+  - Все вызовы SmartGrade/CalculateQuarterMark используют student-specific limits
+- Добавлены цветовые константы в config.go
+
+Stage Summary:
+- Баг с четвертями исправлен (данные теперь из journal_options)
+- UI полностью модернизирован (цветной, современный)
+- Навигация Tab/Delete/стрелки работает
+- Рандом с min-max для каждого ученика добавлен
+- Per-student limits интегрированы в движок оценок

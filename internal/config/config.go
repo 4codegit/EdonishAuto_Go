@@ -66,6 +66,16 @@ const (
         DefaultWorkers = 4
 )
 
+// UI Colors
+const (
+        ColorPrimary = "#2563EB" // Blue
+        ColorSuccess = "#16A34A" // Green
+        ColorError   = "#DC2626" // Red
+        ColorWarning = "#D97706" // Orange/Amber
+        ColorInfo    = "#0891B2" // Cyan
+        ColorMuted   = "#6B7280" // Grey
+)
+
 // SessionFile returns the path to the session persistence file.
 func SessionFile() string {
         home, _ := os.UserHomeDir()
