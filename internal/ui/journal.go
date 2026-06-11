@@ -641,6 +641,7 @@ func (p *JournalPage) deleteGradeInSelectedCell() {
 
 func (p *JournalPage) onClassChange(selected string) {
         p.updateSubjectsForClass(selected)
+        p.updateQuartersForClass(selected)
         if p.subjectSelect.Selected != "" && p.subjectSelect.Selected != "Все предметы" {
                 p.loadJournal()
         }
@@ -731,6 +732,67 @@ func (p *JournalPage) updateSubjectsForClass(selected string) {
         p.subjectSelect.Options = unique
         p.subjectSelect.SetSelectedIndex(0)
         p.subjectSelect.Refresh()
+}
+
+// updateQuartersForClass filters quarter dropdown for the selected class.
+// When a specific class is selected, shows only the quarters available for that class
+// (with correct qpropId values from group-specific data).
+func (p *JournalPage) updateQuartersForClass(selected string) {
+        if p.app.journalOptions == nil {
+                return
+        }
+
+        // If "Все классы" — show all global quarters
+        if selected == "Все классы" || selected == "" {
+                quarterOpts := []string{"Все четверти"}
+                for _, q := range p.app.quartersData {
+                        name, _ := q["name"].(string)
+                        quarterOpts = append(quarterOpts, name)
+                }
+                p.quarterSelect.Options = quarterOpts
+                p.quarterSelect.SetSelectedIndex(0)
+                p.quarterSelect.Refresh()
+                return
+        }
+
+        // Find the selected group and extract its quarters
+        var quarterNames []string
+        seen := make(map[string]bool)
+        for _, g := range p.app.groupsData {
+                if name, _ := g["name"].(string); name == selected {
+                        if groupQuarters, ok := g["quarters"].([]interface{}); ok {
+                                for _, q := range groupQuarters {
+                                        if qm, ok := q.(map[string]interface{}); ok {
+                                                qname := mapStr(qm, "name")
+                                                if qname != "" && !seen[qname] {
+                                                        seen[qname] = true
+                                                        quarterNames = append(quarterNames, qname)
+                                                }
+                                        }
+                                }
+                        }
+                        break
+                }
+        }
+
+        // If no group-specific quarters found, fallback to global
+        if len(quarterNames) == 0 {
+                quarterOpts := []string{"Все четверти"}
+                for _, q := range p.app.quartersData {
+                        name, _ := q["name"].(string)
+                        quarterOpts = append(quarterOpts, name)
+                }
+                p.quarterSelect.Options = quarterOpts
+                p.quarterSelect.SetSelectedIndex(0)
+                p.quarterSelect.Refresh()
+                return
+        }
+
+        quarterOpts := []string{"Все четверти"}
+        quarterOpts = append(quarterOpts, quarterNames...)
+        p.quarterSelect.Options = quarterOpts
+        p.quarterSelect.SetSelectedIndex(0)
+        p.quarterSelect.Refresh()
 }
 
 // ─── Table helpers ────────────────────────────────────────────
@@ -1537,6 +1599,8 @@ func (p *JournalPage) loadJournal() {
                         subjects := p.getSubjectsForGroup(group, subjectSelected)
                         quarters := p.getSelectedQuarters(group, quarterSelected)
 
+                        p.app.LogMessage(fmt.Sprintf("  Группа %s: %d предметов, %d четвертей (выбрана: %q)", groupName, len(subjects), len(quarters), quarterSelected), "info")
+
                         for _, subject := range subjects {
                                 subjectID := mapInt(subject, "subjectId")
                                 subjectName := mapStr(subject, "subjectName")
@@ -1819,13 +1883,19 @@ func (p *JournalPage) getSelectedQuarters(group map[string]interface{}, selected
                 }
                 var result []map[string]interface{}
                 for _, q := range groupQData {
-                        if name, _ := q["name"].(string); name == selected {
+                        qname, _ := q["name"].(string)
+                        p.app.LogMessage(fmt.Sprintf("    Сравнение четверти: %q == %q (qpropId=%v)", qname, selected, q["qpropId"]), "info")
+                        if qname == selected {
                                 result = append(result, q)
                         }
+                }
+                if len(result) == 0 {
+                        p.app.LogMessage(fmt.Sprintf("    ВНИМАНИЕ: четверть %q не найдена в группе! Доступные: %v", selected, quarterNames(groupQData)), "warning")
                 }
                 return result
         }
         // Fallback to global quartersData
+        p.app.LogMessage(fmt.Sprintf("    Группа не имеет group-specific quarters, используем глобальные (%d шт)", len(p.app.quartersData)), "info")
         if selected == "Все четверти" || selected == "" {
                 return p.app.quartersData
         }
@@ -1835,7 +1905,21 @@ func (p *JournalPage) getSelectedQuarters(group map[string]interface{}, selected
                         result = append(result, q)
                 }
         }
+        if len(result) == 0 {
+                p.app.LogMessage(fmt.Sprintf("    ВНИМАНИЕ: четверть %q не найдена в глобальных данных! Доступные: %v", selected, quarterNames(p.app.quartersData)), "warning")
+        }
         return result
+}
+
+// quarterNames returns a list of quarter names for debugging.
+func quarterNames(quarters []map[string]interface{}) []string {
+        names := make([]string, 0, len(quarters))
+        for _, q := range quarters {
+                if name, ok := q["name"].(string); ok {
+                        names = append(names, name)
+                }
+        }
+        return names
 }
 
 // GetStudentLimits returns the per-student grade limits for auto-grade.

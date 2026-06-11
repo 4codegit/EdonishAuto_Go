@@ -8,10 +8,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# ── Read version dynamically from config.py ────────────────────────
-VERSION="$(python3 -c "import sys; sys.path.insert(0, '$SCRIPT_DIR'); from config import APP_VERSION; print(APP_VERSION)" 2>/dev/null)"
+# ── Read version dynamically from config.go ────────────────────────
+VERSION="$(grep 'AppVersion' "$SCRIPT_DIR/internal/config/config.go" | grep -oP '"\K[^"]+' | head -1)"
 if [ -z "$VERSION" ]; then
-    echo "Error: Could not read version from config.py"
+    echo "Error: Could not read version from config.go"
     exit 1
 fi
 

@@ -182,3 +182,27 @@ Stage Summary:
 - Навигация Tab/Delete/стрелки работает
 - Рандом с min-max для каждого ученика добавлен
 - Per-student limits интегрированы в движок оценок
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix quarter filtering bug and prepare v0.5.0 release
+
+Work Log:
+- Analyzed full codebase: journal.go, app.go, auto.go, config.go, grade.go, client.go
+- Identified root cause of quarter filtering bug: `UpdateDropdowns()` didn't update quarter list when class changed (only subjects were updated)
+- Added `updateQuartersForClass()` function to filter quarters when a specific class is selected
+- Added `updateQuartersForClass()` call in `onClassChange()` handler
+- Added debug logging in `getSelectedQuarters()` to trace quarter name matching
+- Added debug logging in `loadJournal()` to show groups/quarters/subjects counts
+- Added `quarterNames()` helper function for debug logging
+- Updated version from 0.4.0 to 0.5.0 in config.go, FyneApp.toml, EdonishAuto_Go/Makefile
+- Updated create_release.sh to read version from config.go (was reading from config.py)
+- Updated create_github_release.sh to read version from config.go
+- Synced EdonishAuto_Go mirror with updated files
+
+Stage Summary:
+- Bug fix: Quarter filtering now works correctly when selecting individual quarters
+- When a specific class is selected, the quarter dropdown updates to show only that class's quarters
+- Added comprehensive debug logging for quarter resolution
+- Version bumped to 0.5.0
+- Release scripts updated for Go version

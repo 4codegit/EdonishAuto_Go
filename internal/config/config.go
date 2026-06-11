@@ -9,7 +9,7 @@ import (
 // Application metadata
 const (
         AppName    = "eDonish Auto"
-        AppVersion = "0.4.0"
+        AppVersion = "0.5.0"
         Signature  = "eDonish Auto by 4code"
 )
 
