@@ -516,6 +516,18 @@ func mapStr(m map[string]interface{}, key string) string {
         return ""
 }
 
+
+// mapInt extracts an int field from a map[string]interface{}.
+func mapInt(m map[string]interface{}, key string) int {
+	if v, ok := m[key].(float64); ok {
+		return int(v)
+	}
+	if v, ok := m[key].(int); ok {
+		return v
+	}
+	return 0
+}
+
 // makeHeaderLabel creates a styled section header label.
 func makeHeaderLabel(text string) *widget.Label {
         return widget.NewLabelWithStyle(text, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
