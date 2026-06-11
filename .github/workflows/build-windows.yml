@@ -1,4 +1,4 @@
-name: Build Windows Release (Go + Fyne)
+name: Build Windows Go Fyne
 
 on:
   push:
@@ -10,7 +10,6 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
