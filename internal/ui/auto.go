@@ -25,7 +25,12 @@ type AutoGradePage struct {
 	minGradeEntry   *widget.Entry
 	maxGradeEntry   *widget.Entry
 	fillEmptyChk    *widget.Check
-	quarterMarksChk *widget.Check
+
+	// What to fill
+	fillDailyChk    *widget.Check
+	fillQuarterChk  *widget.Check
+	fillSemesterChk *widget.Check
+	fillYearChk     *widget.Check
 
 	// Actions
 	analyzeBtn *widget.Button
@@ -67,8 +72,17 @@ func (p *AutoGradePage) Build() fyne.CanvasObject {
 	p.fillEmptyChk = widget.NewCheck("Только пустые ячейки", nil)
 	p.fillEmptyChk.SetChecked(true)
 
-	p.quarterMarksChk = widget.NewCheck("Четвертные оценки", nil)
-	p.quarterMarksChk.SetChecked(true)
+	p.fillDailyChk = widget.NewCheck("Дневные оценки", nil)
+	p.fillDailyChk.SetChecked(true)
+
+	p.fillQuarterChk = widget.NewCheck("Четвертные оценки", nil)
+	p.fillQuarterChk.SetChecked(true)
+
+	p.fillSemesterChk = widget.NewCheck("Семестровые оценки", nil)
+	p.fillSemesterChk.SetChecked(true)
+
+	p.fillYearChk = widget.NewCheck("Годовые оценки", nil)
+	p.fillYearChk.SetChecked(true)
 
 	gradeRange := container.NewHBox(
 		widget.NewLabel("от"),
@@ -93,9 +107,14 @@ func (p *AutoGradePage) Build() fyne.CanvasObject {
 			),
 		),
 		widget.NewSeparator(),
+		p.fillEmptyChk,
+		widget.NewSeparator(),
+		makeHeaderLabel("Что заполнять:"),
 		container.NewGridWithColumns(2,
-			p.fillEmptyChk,
-			p.quarterMarksChk,
+			p.fillDailyChk,
+			p.fillQuarterChk,
+			p.fillSemesterChk,
+			p.fillYearChk,
 		),
 	))
 
@@ -253,7 +272,7 @@ func (p *AutoGradePage) doAnalyze() {
 	p.analyzeBtn.SetText("Анализ...")
 	p.progressBar.SetValue(0)
 	p.progressLabel.SetText("Анализ...")
-	p.resultsEntry.SetText("Анализ журнала...")
+	p.resultsEntry.SetText("Анализ журнала (умный режим)...")
 
 	go func() {
 		groups := p.getSelectedGroups()
@@ -269,11 +288,31 @@ func (p *AutoGradePage) doAnalyze() {
 			maxGrade = v
 		}
 
-		plan := p.app.engine.BuildGradePlan(
-			groups, subjects, quarters,
-			minGrade, maxGrade,
-			p.fillEmptyChk.Checked,
-		)
+		fillEmptyOnly := p.fillEmptyChk.Checked
+		includeDaily := p.fillDailyChk.Checked
+		includeQuarter := p.fillQuarterChk.Checked
+		includeSemester := p.fillSemesterChk.Checked
+		includeYear := p.fillYearChk.Checked
+
+		// Use complete plan builder if any non-daily options are checked
+		var plan *engine.GradePlan
+		if includeQuarter || includeSemester || includeYear {
+			plan = p.app.engine.BuildCompletePlan(
+				groups, subjects, quarters,
+				minGrade, maxGrade,
+				fillEmptyOnly,
+				includeDaily,
+				includeQuarter,
+				includeSemester,
+				includeYear,
+			)
+		} else {
+			plan = p.app.engine.BuildGradePlan(
+				groups, subjects, quarters,
+				minGrade, maxGrade,
+				fillEmptyOnly,
+			)
+		}
 
 		p.app.currentPlan = plan
 		fyne.Do(func() {
@@ -290,13 +329,48 @@ func (p *AutoGradePage) onAnalyzeComplete(plan *engine.GradePlan) {
 
 	toExecute := plan.PendingCount()
 
+	// Count by task type
+	dailyCount := 0
+	quarterCount := 0
+	semesterCount := 0
+	yearCount := 0
+	for _, t := range plan.Tasks {
+		if t.Status == engine.StatusPending {
+			switch t.TaskType {
+			case engine.TaskDaily:
+				dailyCount++
+			case engine.TaskQuarter:
+				quarterCount++
+			case engine.TaskSemester:
+				semesterCount++
+			case engine.TaskYear:
+				yearCount++
+			}
+		}
+	}
+
 	lines := "==================================================\n"
-	lines += "  ПЛАН ОЦЕНОК\n"
+	lines += "  ПЛАН ОЦЕНОК (Умный режим)\n"
 	lines += "==================================================\n\n"
 	lines += fmt.Sprintf("  Всего задач:      %d\n", plan.TotalTasks)
 	lines += fmt.Sprintf("  Будет выполнено:  %d\n", toExecute)
 	lines += fmt.Sprintf("  Пропущено:        %d\n\n", int(plan.Skipped))
 
+	if dailyCount > 0 {
+		lines += fmt.Sprintf("  Дневные оценки:   %d\n", dailyCount)
+	}
+	if quarterCount > 0 {
+		lines += fmt.Sprintf("  Четвертные:       %d\n", quarterCount)
+	}
+	if semesterCount > 0 {
+		lines += fmt.Sprintf("  Семестровые:      %d\n", semesterCount)
+	}
+	if yearCount > 0 {
+		lines += fmt.Sprintf("  Годовые:          %d\n", yearCount)
+	}
+	lines += "\n"
+
+	// Group by class/subject
 	type groupKey struct{ group, subject string }
 	groupMap := make(map[groupKey][]*engine.GradeTask)
 	for _, t := range plan.Tasks {
@@ -314,13 +388,29 @@ func (p *AutoGradePage) onAnalyzeComplete(plan *engine.GradePlan) {
 				lines += fmt.Sprintf("    ... и ещё %d\n", len(tasks)-5)
 				break
 			}
-			lines += fmt.Sprintf("    - %s -> %d (%s)\n", t.StudentName, t.Mark, t.DateStr)
+			typeLabel := taskTypeLabel(t.TaskType)
+			lines += fmt.Sprintf("    - %s -> %d (%s, %s)\n", t.StudentName, t.Mark, t.DateStr, typeLabel)
 		}
 		lines += "\n"
 	}
 
 	p.resultsEntry.SetText(lines)
 	p.progressLabel.SetText(fmt.Sprintf("Анализ завершён: %d оценок будет добавлено", toExecute))
+}
+
+func taskTypeLabel(t engine.TaskType) string {
+	switch t {
+	case engine.TaskDaily:
+		return "дневная"
+	case engine.TaskQuarter:
+		return "четвертная"
+	case engine.TaskSemester:
+		return "семестровая"
+	case engine.TaskYear:
+		return "годовая"
+	default:
+		return "оценка"
+	}
 }
 
 // doStart starts the grade execution.
@@ -342,21 +432,6 @@ func (p *AutoGradePage) doStart() {
 
 	go func() {
 		p.app.engine.ExecutePlan(p.app.currentPlan, config.DefaultWorkers, 150*time.Millisecond)
-
-		if p.quarterMarksChk.Checked {
-			p.app.LogMessage("Заполнение четвертных оценок...", "info")
-			qplan := p.app.engine.BuildGradePlanForQuarterMarks(
-				p.getSelectedGroups(),
-				p.getSelectedSubjects(),
-				p.getSelectedQuarters(),
-				parseInt(p.minGradeEntry.Text),
-				parseInt(p.maxGradeEntry.Text),
-				p.fillEmptyChk.Checked,
-			)
-			if qplan.TotalTasks > 0 {
-				p.app.engine.ExecuteQuarterMarks(qplan, 200*time.Millisecond)
-			}
-		}
 
 		fyne.Do(func() {
 			p.onExecutionComplete()
