@@ -52,7 +52,6 @@ func (p *SchoolPage) SetSchools(schools []api.School) fyne.CanvasObject {
 			p.app.apiClient.SetSchool(school.ID)
 			p.app.LogMessage(fmt.Sprintf("Выбрана школа: %s (ID: %d)", school.Name, school.ID), "info")
 			p.app.SaveSessionSchool(school.ID)
-			// showDashboard uses setPage() which is goroutine-safe
 			p.app.showDashboard(p.app.apiClient.UserInfo)
 		})
 		selectBtn.Importance = widget.HighImportance
