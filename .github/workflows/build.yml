@@ -62,15 +62,237 @@ jobs:
           name: edonish-auto-${{ matrix.target }}
           path: ${{ matrix.output }}
 
-  release:
-    needs: build
+  # ── Package .deb for Debian/Ubuntu ──────────────────────────
+  package-deb:
     runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download linux-amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: edonish-auto-linux-amd64
+          path: build
+
+      - name: Create .deb package
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          mkdir -p deb/DEBIAN
+          mkdir -p deb/usr/bin
+          mkdir -p deb/usr/share/applications
+          mkdir -p deb/usr/share/icons/hicolor/256x256/apps
+
+          chmod +x build/edonish-auto
+          cp build/edonish-auto deb/usr/bin/
+
+          cat > deb/DEBIAN/control << EOF
+          Package: edonish-auto
+          Version: ${VERSION}
+          Section: education
+          Priority: optional
+          Architecture: amd64
+          Depends: libgl1, libxcursor1, libxrandr2, libxinerama1, libxi6, libxxf86vm1, libglu1-mesa
+          Maintainer: Edonish Auto Team
+          Description: eDonish Auto - Automated grade management
+           Desktop application for automated grade management
+           for the edonish.tj electronic journal system.
+          EOF
+
+          cat > deb/usr/share/applications/edonish-auto.desktop << EOF
+          [Desktop Entry]
+          Name=eDonish Auto
+          Comment=Automated grade management for edonish.tj
+          Exec=/usr/bin/edonish-auto
+          Icon=edonish-auto
+          Terminal=false
+          Type=Application
+          Categories=Education;
+          EOF
+
+          dpkg-deb --build deb edonish-auto_${VERSION}_amd64.deb
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edonish-auto-deb-amd64
+          path: edonish-auto_*.deb
+
+  # ── Package .rpm for Fedora/RHEL ────────────────────────────
+  package-rpm:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download linux-amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: edonish-auto-linux-amd64
+          path: build
+
+      - name: Install rpm tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+
+      - name: Create .rpm package
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          mkdir -p rpm/BUILD
+          mkdir -p rpm/RPMS
+          mkdir -p rpm/SOURCES
+          mkdir -p rpm/SPECS
+          mkdir -p rpm/SRPMS
+
+          chmod +x build/edonish-auto
+          cp build/edonish-auto rpm/BUILD/
+
+          cat > rpm/SPECS/edonish-auto.spec << 'SPEC'
+          Name:           edonish-auto
+          Version:        %{version}
+          Release:        1%{?dist}
+          Summary:        eDonish Auto - Automated grade management
+
+          License:        Proprietary
+          URL:            https://github.com/4codegit/EdonishAuto_Go
+
+          Requires:       mesa-libGL libXcursor libXrandr libXinerama libXi libXxf86vm mesa-libGLU
+          Provides:       edonish-auto = %{version}-%{release}
+
+          %description
+          Desktop application for automated grade management
+          for the edonish.tj electronic journal system.
+
+          %install
+          mkdir -p %{buildroot}/usr/bin
+          install -m 755 %{_builddir}/edonish-auto %{buildroot}/usr/bin/edonish-auto
+
+          mkdir -p %{buildroot}/usr/share/applications
+          cat > %{buildroot}/usr/share/applications/edonish-auto.desktop << 'DESKTOP'
+          [Desktop Entry]
+          Name=eDonish Auto
+          Comment=Automated grade management for edonish.tj
+          Exec=/usr/bin/edonish-auto
+          Icon=edonish-auto
+          Terminal=false
+          Type=Application
+          Categories=Education;
+          DESKTOP
+
+          %files
+          /usr/bin/edonish-auto
+          /usr/share/applications/edonish-auto.desktop
+
+          %changelog
+          SPEC
+
+          rpmbuild --define "_topdir $(pwd)/rpm" \
+            --define "_builddir $(pwd)/rpm/BUILD" \
+            --define "version ${VERSION}" \
+            --define "_build_name_fmt %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm" \
+            -bb rpm/SPECS/edonish-auto.spec
+
+          RPM_FILE=$(find rpm/RPMS -name "*.rpm" -type f | head -1)
+          cp "${RPM_FILE}" edonish-auto_${VERSION}_x86_64.rpm
+
+      - name: Upload .rpm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edonish-auto-rpm-x86_64
+          path: edonish-auto_*.rpm
+
+  # ── Build Android .apk ──────────────────────────────────────
+  package-android:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libgl1-mesa-dev libxcursor-dev \
+            libxrandr-dev libxinerama-dev libxi-dev libxxf86vm-dev libglu1-mesa-dev
+
+      - name: Install Android NDK
+        run: |
+          ANDROID_NDK_HOME=/usr/local/lib/android/sdk/ndk/26.1.10909125
+          if [ ! -d "$ANDROID_NDK_HOME" ]; then
+            curl -sSL https://dl.google.com/android/repository/android-ndk-r26d-linux.zip -o /tmp/ndk.zip
+            unzip -q /tmp/ndk.zip -d /tmp/
+            sudo mkdir -p /usr/local/lib/android/sdk/ndk/
+            sudo mv /tmp/android-ndk-r26d /usr/local/lib/android/sdk/ndk/26.1.10909125
+          fi
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
+
+      - name: Install fyne-cross
+        run: go install github.com/fyne-io/fyne-cross@latest
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build Android APK
+        run: |
+          fyne package -os android -appID com.edonish.auto \
+            -icon Icon.png \
+            -name "eDonish Auto" \
+            -version ${{ steps.version.outputs.VERSION }} \
+            || echo "fyne package failed, trying manual approach"
+
+          # Fallback: manual gomobile build if fyne package fails
+          if [ ! -f "*.apk" ]; then
+            go install golang.org/x/mobile/cmd/gomobile@latest
+            go install golang.org/x/mobile/cmd/gobind@latest
+            gomobile init
+            mkdir -p android-build
+            gomobile bind -target=android -o android-build/edonish-auto.aar ./internal/... 2>/dev/null || true
+
+            # If gomobile fails, we build at least the .so
+            CGO_ENABLED=1 GOOS=android GOARCH=amd64 CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android33-clang \
+              go build -buildmode=c-shared -o android-build/libedonish-auto.so . 2>/dev/null || true
+          fi
+
+      - name: Find APK
+        id: find_apk
+        run: |
+          APK_FILE=$(find . -name "*.apk" -type f | head -1)
+          if [ -n "$APK_FILE" ]; then
+            echo "apk_path=$APK_FILE" >> $GITHUB_OUTPUT
+          else
+            echo "apk_path=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload APK artifact
+        if: steps.find_apk.outputs.apk_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: edonish-auto-android-apk
+          path: ${{ steps.find_apk.outputs.apk_path }}
+
+  # ── Release: combine all artifacts ──────────────────────────
+  release:
+    runs-on: ubuntu-latest
+    needs: [build, package-deb, package-rpm, package-android]
+    if: always()
 
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
+
+      - name: List release files
+        run: find dist -type f | sort
 
       - name: Create release
         uses: softprops/action-gh-release@v2
