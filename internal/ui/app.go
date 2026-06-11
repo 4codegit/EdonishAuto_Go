@@ -30,7 +30,7 @@ type App struct {
         // Root container for goroutine-safe page switching.
         // SetContent is called ONCE at startup; all page switches
         // update rootContainer.Objects and call Refresh().
-        rootContainer *container.Stack
+        rootContainer *fyne.Container
 
         // Data
         journalOptions  interface{}
@@ -161,8 +161,7 @@ func (a *App) showDashboard(userInfo *api.UserInfo) {
         a.statusLabel = widget.NewLabelWithStyle("Готов", fyne.TextAlignLeading, fyne.TextStyle{Bold: false})
 
         // Theme toggle icon button
-        themeIcon := theme.DarkThemeIcon()
-        themeBtn := widget.NewButtonWithIcon("", themeIcon, func() {
+        themeBtn := widget.NewButtonWithIcon("Тема", theme.ColorPaletteIcon(), func() {
                 a.isDarkTheme = !a.isDarkTheme
                 if a.isDarkTheme {
                         a.fyneApp.Settings().SetTheme(theme.DarkTheme())
