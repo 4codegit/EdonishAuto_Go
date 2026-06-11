@@ -13,6 +13,61 @@ import (
         "github.com/4codegit/edonish-auto/internal/engine"
 )
 
+// ─── Data models ──────────────────────────────────────────────
+
+// journalData holds the structured data for the journal table view.
+type journalData struct {
+        groupName   string
+        subjectName string
+        quarterName string
+        dates       []dateCol    // column headers (dates)
+        students    []studentRow // rows (one per student)
+}
+
+// dateCol represents a single date column in the journal.
+type dateCol struct {
+        dateID   string
+        dateStr  string // full date, e.g. "2025-01-15"
+        shortStr string // short date, e.g. "01-15"
+}
+
+// studentRow represents a single student row with marks.
+type studentRow struct {
+        studentID   int
+        name        string
+        marks       map[string]string // dateID -> display text
+        markValues  map[string]int    // dateID -> numeric mark value
+        avg         float64
+        min         int
+        max         int
+        gradeCount  int
+        missing     int
+}
+
+// studentAnalysis holds detailed analysis for a single student.
+type studentAnalysis struct {
+        studentName string
+        subjects    []subjectAnalysis
+}
+
+// subjectAnalysis holds per-subject analysis.
+type subjectAnalysis struct {
+        groupName   string
+        subjectName string
+        quarterName string
+        grades      []int
+        min         int
+        max         int
+        avg         float64
+        missing     int
+        total       int
+        classAvg    float64
+        classMin    int
+        classMax    int
+}
+
+// ─── JournalPage ──────────────────────────────────────────────
+
 // JournalPage holds the journal viewer UI components.
 type JournalPage struct {
         app *App
@@ -22,19 +77,22 @@ type JournalPage struct {
         subjectSelect *widget.Select
         quarterSelect *widget.Select
 
-        // Display mode
-        modeSelect *widget.Select
+        // Loading state
+        loadingLabel *widget.Label
 
-        // Output
-        journalEntry *widget.Entry
+        // Table view
+        journalTable *widget.Table
+        journalData  []journalData // one per group/subject/quarter combo
 
-        // Student analysis
-        studentSelect *widget.Select
-        analysisEntry *widget.Entry
+        // Analysis view
+        studentSelect  *widget.Select
+        analysisTable  *widget.Table
+        analysisData   []studentAnalysis
+        analysisDetail *widget.Entry
 
-        // Card references for show/hide toggling
-        journalCard  *widget.Card
-        analysisCard *widget.Card
+        // Container references for mode switching
+        tableContainer   *fyne.Container
+        analysisContainer *fyne.Container
 }
 
 // NewJournalPage creates a new journal page.
@@ -55,63 +113,94 @@ func (p *JournalPage) Build() fyne.CanvasObject {
         p.quarterSelect = widget.NewSelect([]string{"Выберите..."}, func(s string) {})
         p.quarterSelect.PlaceHolder = "Четверть"
 
-        p.modeSelect = widget.NewSelect([]string{"Таблица", "Анализ ученика"}, func(s string) {
-                p.onModeChange(s)
-        })
-        p.modeSelect.PlaceHolder = "Режим"
-        p.modeSelect.SetSelectedIndex(0)
-
         loadBtn := widget.NewButtonWithIcon("Загрузить", theme.ViewRefreshIcon(), func() {
                 p.loadJournal()
         })
         loadBtn.Importance = widget.HighImportance
 
-        p.journalEntry = widget.NewMultiLineEntry()
-        p.journalEntry.SetPlaceHolder("Выберите класс, предмет и четверть, затем нажмите «Загрузить»")
-        p.journalEntry.Wrapping = fyne.TextWrapWord
-        p.journalEntry.TextStyle = fyne.TextStyle{Monospace: true}
-        p.journalEntry.SetMinRowsVisible(18)
+        modeSelect := widget.NewSelect([]string{"Таблица", "Анализ ученика"}, func(s string) {
+                p.onModeChange(s)
+        })
+        modeSelect.PlaceHolder = "Режим"
 
+        p.loadingLabel = widget.NewLabelWithStyle("Выберите класс, предмет и четверть, затем нажмите «Загрузить»",
+                fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
+
+        // ── Journal Table ─────────────────────────────────────
+        // Create an empty table that will be populated after loading.
+        // Columns: [N, ФИО ученика, date1, date2, ..., Ср, Мин, Макс]
+        // We start with 4 columns and 1 row (placeholder).
+        p.journalTable = widget.NewTable(
+                func() (int, int) { return p.journalTableRowCount(), p.journalTableColCount() },
+                func() fyne.CanvasObject {
+                        return widget.NewLabelWithStyle("", fyne.TextAlignCenter, fyne.TextStyle{})
+                },
+                func(id widget.TableCellID, cell fyne.CanvasObject) {
+                        p.journalTableCellUpdate(id, cell.(*widget.Label))
+                },
+        )
+        p.journalTable.SetColumnWidth(0, 40)  // #
+        p.journalTable.SetColumnWidth(1, 200) // ФИО
+        // date columns default width set after loading
+
+        // ── Analysis: student selector + detail ───────────────
         p.studentSelect = widget.NewSelect([]string{}, func(s string) {
                 p.onStudentChange(s)
         })
         p.studentSelect.PlaceHolder = "Выберите ученика..."
 
-        p.analysisEntry = widget.NewMultiLineEntry()
-        p.analysisEntry.SetPlaceHolder("Выберите ученика для анализа оценок...")
-        p.analysisEntry.Wrapping = fyne.TextWrapWord
-        p.analysisEntry.TextStyle = fyne.TextStyle{Monospace: true}
-        p.analysisEntry.SetMinRowsVisible(18)
+        // Analysis table: [Предмет, Четверть, Ср, Мин, Макс, Расброс, vs Класс]
+        p.analysisTable = widget.NewTable(
+                func() (int, int) { return p.analysisRowCount(), 7 },
+                func() fyne.CanvasObject {
+                        return widget.NewLabelWithStyle("", fyne.TextAlignCenter, fyne.TextStyle{})
+                },
+                func(id widget.TableCellID, cell fyne.CanvasObject) {
+                        p.analysisTableCellUpdate(id, cell.(*widget.Label))
+                },
+        )
+        p.analysisTable.SetColumnWidth(0, 150) // Предмет
+        p.analysisTable.SetColumnWidth(1, 100) // Четверть
+        p.analysisTable.SetColumnWidth(2, 60)  // Ср
+        p.analysisTable.SetColumnWidth(3, 50)  // Мин
+        p.analysisTable.SetColumnWidth(4, 50)  // Макс
+        p.analysisTable.SetColumnWidth(5, 60)  // Расброс
+        p.analysisTable.SetColumnWidth(6, 100) // vs Класс
 
-        // Toolbar
+        p.analysisDetail = widget.NewMultiLineEntry()
+        p.analysisDetail.SetPlaceHolder("Подробный анализ появится здесь...")
+        p.analysisDetail.Wrapping = fyne.TextWrapWord
+        p.analysisDetail.TextStyle = fyne.TextStyle{Monospace: true}
+        p.analysisDetail.SetMinRowsVisible(12)
+
+        // ── Containers ────────────────────────────────────────
+        p.tableContainer = container.NewBorder(p.loadingLabel, nil, nil, nil, p.journalTable)
+
+        analysisHeader := container.NewVBox(
+                p.studentSelect,
+                widget.NewSeparator(),
+                p.analysisTable,
+                widget.NewSeparator(),
+        )
+        analysisDetailCard := widget.NewCard("Подробный анализ", "", p.analysisDetail)
+        p.analysisContainer = container.NewBorder(analysisHeader, nil, nil, nil, analysisDetailCard)
+        p.analysisContainer.Hide()
+
+        // ── Toolbar ───────────────────────────────────────────
         toolbar := widget.NewCard("Просмотр журнала", "", container.NewVBox(
                 container.NewGridWithColumns(5,
                         p.classSelect,
                         p.subjectSelect,
                         p.quarterSelect,
-                        p.modeSelect,
+                        modeSelect,
                         loadBtn,
                 ),
         ))
 
-        // Journal table view
-        p.journalCard = widget.NewCard("Журнал оценок", "", p.journalEntry)
-
-        // Student analysis view (hidden by default)
-        p.studentSelect.Hide()
-        p.analysisCard = widget.NewCard("Расброс оценок ученика", "",
-                container.NewVBox(
-                        p.studentSelect,
-                        widget.NewSeparator(),
-                        p.analysisEntry,
-                ),
-        )
-        p.analysisCard.Hide()
-
         content := container.NewVBox(
                 toolbar,
-                p.journalCard,
-                p.analysisCard,
+                p.tableContainer,
+                p.analysisContainer,
         )
 
         scroll := container.NewVScroll(content)
@@ -120,25 +209,23 @@ func (p *JournalPage) Build() fyne.CanvasObject {
         return scroll
 }
 
-// onModeChange switches between table and analysis mode.
+// ─── Mode switching ───────────────────────────────────────────
+
 func (p *JournalPage) onModeChange(mode string) {
-        // Guard: widgets may not be created yet when SetSelectedIndex triggers
-        // the callback during Build().
-        if p.journalCard == nil || p.analysisCard == nil {
+        if p.tableContainer == nil || p.analysisContainer == nil {
                 return
         }
-
         switch mode {
         case "Анализ ученика":
-                p.journalCard.Hide()
-                p.analysisCard.Show()
-                p.studentSelect.Show()
-        default: // "Таблица"
-                p.journalCard.Show()
-                p.analysisCard.Hide()
-                p.studentSelect.Hide()
+                p.tableContainer.Hide()
+                p.analysisContainer.Show()
+        default:
+                p.tableContainer.Show()
+                p.analysisContainer.Hide()
         }
 }
+
+// ─── Dropdowns ────────────────────────────────────────────────
 
 // UpdateDropdowns populates dropdowns with loaded data.
 func (p *JournalPage) UpdateDropdowns() {
@@ -199,7 +286,6 @@ func (p *JournalPage) onClassChange(selected string) {
                 }
         }
 
-        // Deduplicate
         seen := make(map[string]bool)
         unique := []string{"Все предметы"}
         for _, s := range subjects {
@@ -214,39 +300,181 @@ func (p *JournalPage) onClassChange(selected string) {
         p.subjectSelect.Refresh()
 }
 
-// studentGrade holds computed grade statistics for a student.
-type studentGrade struct {
-        name    string
-        grades  []int
-        min     int
-        max     int
-        avg     float64
-        sum     int
-        count   int
-        missing int
+// ─── Journal Table helpers ────────────────────────────────────
+
+func (p *JournalPage) journalTableRowCount() int {
+        rows := 0
+        for _, jd := range p.journalData {
+                rows += 1 // header row
+                rows += len(jd.students)
+                rows += 1 // spacer
+        }
+        if rows == 0 {
+                rows = 1 // placeholder
+        }
+        return rows
 }
 
-// loadJournal loads and displays the journal for selected filters.
+func (p *JournalPage) journalTableColCount() int {
+        maxCols := 4 // #, ФИО, Ср, Мин/Макс
+        for _, jd := range p.journalData {
+                cols := 3 + len(jd.dates) + 3 // #, ФИО, dates..., Ср, Мин, Макс
+                if cols > maxCols {
+                        maxCols = cols
+                }
+        }
+        return maxCols
+}
+
+func (p *JournalPage) journalTableCellUpdate(id widget.TableCellID, label *widget.Label) {
+        if len(p.journalData) == 0 {
+                if id.Row == 0 && id.Col == 1 {
+                        label.SetText("Нет данных — нажмите «Загрузить»")
+                } else {
+                        label.SetText("")
+                }
+                return
+        }
+
+        // Map row index to the correct journalData + local row
+        rowIdx := 0
+        for di, jd := range p.journalData {
+                // Header row
+                if id.Row == rowIdx {
+                        p.journalHeaderCell(id.Col, jd, label, di)
+                        return
+                }
+                rowIdx++
+
+                // Student rows
+                if id.Row < rowIdx+len(jd.students) {
+                        si := id.Row - rowIdx
+                        p.journalStudentCell(id.Col, jd, jd.students[si], label, di)
+                        return
+                }
+                rowIdx += len(jd.students)
+
+                // Spacer row
+                if id.Row == rowIdx {
+                        p.journalSpacerCell(id.Col, label, di)
+                        return
+                }
+                rowIdx++
+        }
+
+        label.SetText("")
+}
+
+func (p *JournalPage) journalHeaderCell(col int, jd journalData, label *widget.Label, dataIdx int) {
+        totalCols := 3 + len(jd.dates) + 3
+        if col >= totalCols {
+                label.SetText("")
+                return
+        }
+
+        label.TextStyle = fyne.TextStyle{Bold: true}
+
+        switch {
+        case col == 0:
+                label.SetText("#")
+        case col == 1:
+                // Show group/subject/quarter as header
+                label.SetText(fmt.Sprintf("%s │ %s │ %s", jd.groupName, jd.subjectName, jd.quarterName))
+        case col >= 2 && col < 2+len(jd.dates):
+                label.SetText(jd.dates[col-2].shortStr)
+        case col == 2+len(jd.dates):
+                label.SetText("Ср")
+        case col == 2+len(jd.dates)+1:
+                label.SetText("Мин")
+        case col == 2+len(jd.dates)+2:
+                label.SetText("Макс")
+        }
+}
+
+func (p *JournalPage) journalStudentCell(col int, jd journalData, sr studentRow, label *widget.Label, dataIdx int) {
+        totalCols := 3 + len(jd.dates) + 3
+        if col >= totalCols {
+                label.SetText("")
+                return
+        }
+
+        label.TextStyle = fyne.TextStyle{}
+
+        switch {
+        case col == 0:
+                // Find student index
+                for i, s := range jd.students {
+                        if s.studentID == sr.studentID {
+                                label.SetText(fmt.Sprintf("%d", i+1))
+                                return
+                        }
+                }
+                label.SetText("")
+        case col == 1:
+                label.SetText(sr.name)
+                label.Alignment = fyne.TextAlignLeading
+        case col >= 2 && col < 2+len(jd.dates):
+                dateID := jd.dates[col-2].dateID
+                if display, ok := sr.marks[dateID]; ok {
+                        label.SetText(display)
+                        // Color code by mark value
+                        if val, okv := sr.markValues[dateID]; okv {
+                                if val >= 9 {
+                                        label.TextStyle = fyne.TextStyle{Bold: true}
+                                } else if val <= 3 {
+                                        label.TextStyle = fyne.TextStyle{Italic: true}
+                                }
+                        }
+                } else {
+                        label.SetText("—")
+                }
+        case col == 2+len(jd.dates):
+                if sr.gradeCount > 0 {
+                        label.SetText(fmt.Sprintf("%.1f", sr.avg))
+                } else {
+                        label.SetText("—")
+                }
+        case col == 2+len(jd.dates)+1:
+                if sr.gradeCount > 0 {
+                        label.SetText(fmt.Sprintf("%d", sr.min))
+                } else {
+                        label.SetText("—")
+                }
+        case col == 2+len(jd.dates)+2:
+                if sr.gradeCount > 0 {
+                        label.SetText(fmt.Sprintf("%d", sr.max))
+                } else {
+                        label.SetText("—")
+                }
+        }
+}
+
+func (p *JournalPage) journalSpacerCell(col int, label *widget.Label, dataIdx int) {
+        label.SetText("")
+}
+
+// ─── Load journal data ────────────────────────────────────────
+
 func (p *JournalPage) loadJournal() {
         classSelected := p.classSelect.Selected
         subjectSelected := p.subjectSelect.Selected
         quarterSelected := p.quarterSelect.Selected
 
-        p.journalEntry.SetText("Загрузка журнала...")
+        p.loadingLabel.SetText("Загрузка журнала...")
         p.app.LogMessage(fmt.Sprintf("Загрузка журнала: %s / %s / %s", classSelected, subjectSelected, quarterSelected), "info")
 
         go func() {
                 groups := p.getSelectedGroups(classSelected)
                 if len(groups) == 0 {
                         fyne.Do(func() {
-                                p.journalEntry.SetText("Не выбран класс")
+                                p.loadingLabel.SetText("Не выбран класс")
                         })
                         return
                 }
 
-                var allLines []string
-                // Collect all students across groups for student selector
-                allStudents := make(map[string]studentGrade)
+                var allData []journalData
+                // Collect student names for analysis selector
+                studentNames := make(map[string]bool)
 
                 for _, group := range groups {
                         groupID := mapInt(group, "id")
@@ -266,329 +494,255 @@ func (p *JournalPage) loadJournal() {
                                         // Get dates
                                         datesData, err := p.app.apiClient.GetJournalDates(groupID, subjectID, qpropID)
                                         if err != nil {
-                                                allLines = append(allLines, fmt.Sprintf("Ошибка дат: %v", err))
                                                 continue
                                         }
-
                                         days := engine.ExtractDays(datesData)
                                         if len(days) == 0 {
-                                                allLines = append(allLines, fmt.Sprintf("Нет дат: %s | %s | %s", groupName, subjectName, quarterName))
                                                 continue
                                         }
 
                                         // Get students
                                         studentsData, err := p.app.apiClient.GetJournalStudents(groupID, subjectID, qpropID)
                                         if err != nil {
-                                                allLines = append(allLines, fmt.Sprintf("Ошибка студентов: %v", err))
+                                                continue
+                                        }
+                                        students := engine.ExtractStudents(studentsData)
+                                        if len(students) == 0 {
                                                 continue
                                         }
 
-                                        students := engine.ExtractStudents(studentsData)
-
-                                        // Build journal display
-                                        allLines = append(allLines, "")
-                                        allLines = append(allLines, fmt.Sprintf("═══ %s │ %s │ %s ═══", groupName, subjectName, quarterName))
-                                        allLines = append(allLines, "")
-
-                                        // Header row with dates
-                                        header := "Ученик                \t"
+                                        // Build date columns
+                                        var dateCols []dateCol
                                         for _, day := range days {
+                                                dateID := mapStr(day, "assignmentDateId")
                                                 dateStr := mapStr(day, "assignmentDate")
+                                                shortStr := dateStr
                                                 if len(dateStr) >= 10 {
-                                                        dateStr = dateStr[5:10] // MM-DD
+                                                        shortStr = dateStr[5:10] // MM-DD
                                                 }
-                                                header += dateStr + "\t"
+                                                dateCols = append(dateCols, dateCol{
+                                                        dateID:   dateID,
+                                                        dateStr:  dateStr,
+                                                        shortStr: shortStr,
+                                                })
                                         }
-                                        header += "Ср│Мин│Макс"
-                                        allLines = append(allLines, header)
-                                        allLines = append(allLines, strings.Repeat("─", len(header)+10))
 
-                                        // Student rows
+                                        // Build student rows
+                                        var studentRows []studentRow
                                         for _, student := range students {
+                                                studentID := mapInt(student, "studentId")
                                                 studentName := fmt.Sprintf("%s %s", mapStr(student, "lastName"), mapStr(student, "firstName"))
-                                                row := studentName + "\t"
 
                                                 existingMarks := engine.ExtractExistingMarks(student)
                                                 markDetails := extractMarkDetails(student)
 
-                                                var studentGrades []int
-                                                missingCount := 0
+                                                sr := studentRow{
+                                                        studentID:  studentID,
+                                                        name:       studentName,
+                                                        marks:      make(map[string]string),
+                                                        markValues: make(map[string]int),
+                                                }
 
-                                                for _, day := range days {
-                                                        dateID := mapStr(day, "assignmentDateId")
-                                                        if _, has := existingMarks[dateID]; has {
-                                                                if markInfo, ok := markDetails[dateID]; ok {
-                                                                        display := engine.ParseGradeDisplay(markInfo.shortName, markInfo.markValue)
-                                                                        row += display + "\t"
-                                                                        if markInfo.markValue > 0 {
-                                                                                studentGrades = append(studentGrades, markInfo.markValue)
+                                                var grades []int
+                                                for _, dc := range dateCols {
+                                                        if _, has := existingMarks[dc.dateID]; has {
+                                                                if mi, ok := markDetails[dc.dateID]; ok {
+                                                                        display := engine.ParseGradeDisplay(mi.shortName, mi.markValue)
+                                                                        sr.marks[dc.dateID] = display
+                                                                        sr.markValues[dc.dateID] = mi.markValue
+                                                                        if mi.markValue > 0 {
+                                                                                grades = append(grades, mi.markValue)
                                                                         }
                                                                 } else {
-                                                                        row += "+\t"
+                                                                        sr.marks[dc.dateID] = "+"
                                                                 }
                                                         } else {
-                                                                row += "—\t"
-                                                                missingCount++
+                                                                sr.missing++
                                                         }
                                                 }
 
-                                                // Compute stats for this student in this subject/quarter
-                                                sg := computeStudentGrades(studentName, studentGrades, missingCount)
-                                                key := fmt.Sprintf("%s|%s|%s", studentName, subjectName, quarterName)
-                                                allStudents[key] = sg
-
-                                                // Append min/max/avg to the row
-                                                if sg.count > 0 {
-                                                        row += fmt.Sprintf("%.1f│%d│%d", sg.avg, sg.min, sg.max)
-                                                } else {
-                                                        row += "—│—│—"
+                                                // Compute stats
+                                                sr.gradeCount = len(grades)
+                                                if len(grades) > 0 {
+                                                        sr.min = grades[0]
+                                                        sr.max = grades[0]
+                                                        sum := 0
+                                                        for _, g := range grades {
+                                                                sum += g
+                                                                if g < sr.min {
+                                                                        sr.min = g
+                                                                }
+                                                                if g > sr.max {
+                                                                        sr.max = g
+                                                                }
+                                                        }
+                                                        sr.avg = float64(sum) / float64(len(grades))
                                                 }
 
-                                                allLines = append(allLines, row)
+                                                studentRows = append(studentRows, sr)
+                                                studentNames[studentName] = true
                                         }
 
-                                        // Class summary
-                                        allLines = append(allLines, "")
-                                        allLines = append(allLines, p.buildClassSummary(allStudents, groupName, subjectName, quarterName))
+                                        allData = append(allData, journalData{
+                                                groupName:   groupName,
+                                                subjectName: subjectName,
+                                                quarterName: quarterName,
+                                                dates:       dateCols,
+                                                students:    studentRows,
+                                        })
                                 }
                         }
                 }
 
-                if len(allLines) == 0 {
-                        allLines = append(allLines, "Нет данных для отображения")
-                }
-
-                result := strings.Join(allLines, "\n")
                 fyne.Do(func() {
-                        p.journalEntry.SetText(result)
+                        p.journalData = allData
+                        p.journalTable.Refresh()
+
+                        // Set date column widths
+                        for _, jd := range allData {
+                                for i := range jd.dates {
+                                        p.journalTable.SetColumnWidth(2+i, 50)
+                                }
+                                // Ср, Мин, Макс columns
+                                cols := len(jd.dates)
+                                p.journalTable.SetColumnWidth(2+cols, 50)   // Ср
+                                p.journalTable.SetColumnWidth(2+cols+1, 45) // Мин
+                                p.journalTable.SetColumnWidth(2+cols+2, 45) // Макс
+                        }
+
+                        if len(allData) == 0 {
+                                p.loadingLabel.SetText("Нет данных для отображения")
+                        } else {
+                                totalStudents := 0
+                                for _, jd := range allData {
+                                        totalStudents += len(jd.students)
+                                }
+                                p.loadingLabel.SetText(fmt.Sprintf("Загружено: %d класс/предмет/четверть, %d учеников",
+                                        len(allData), totalStudents))
+                        }
 
                         // Update student selector for analysis mode
-                        p.updateStudentSelector(allStudents)
+                        var names []string
+                        for n := range studentNames {
+                                names = append(names, n)
+                        }
+                        sort.Strings(names)
+                        p.studentSelect.Options = names
+                        if len(names) > 0 {
+                                p.studentSelect.SetSelectedIndex(0)
+                        }
+                        p.studentSelect.Refresh()
                 })
         }()
 }
 
-// computeStudentGrades computes min, max, avg for a student's grades.
-func computeStudentGrades(name string, grades []int, missing int) studentGrade {
-        sg := studentGrade{
-                name:    name,
-                grades:  grades,
-                missing: missing,
-                count:   len(grades),
+// ─── Analysis mode ────────────────────────────────────────────
+
+func (p *JournalPage) analysisRowCount() int {
+        if len(p.analysisData) == 0 {
+                return 1
         }
-        if len(grades) == 0 {
-                return sg
+        rows := 1 // header
+        for _, sa := range p.analysisData {
+                rows += len(sa.subjects)
         }
-        sg.min = grades[0]
-        sg.max = grades[0]
-        sg.sum = 0
-        for _, g := range grades {
-                sg.sum += g
-                if g < sg.min {
-                        sg.min = g
-                }
-                if g > sg.max {
-                        sg.max = g
-                }
-        }
-        sg.avg = float64(sg.sum) / float64(sg.count)
-        return sg
+        return rows
 }
 
-// buildClassSummary builds a summary block for the class showing overall stats.
-func (p *JournalPage) buildClassSummary(students map[string]studentGrade, groupName, subjectName, quarterName string) string {
-        var lines []string
-        lines = append(lines, fmt.Sprintf("  ┌─ Сводка: %s │ %s │ %s ─┐", groupName, subjectName, quarterName))
-
-        var allGrades []int
-        studentStats := make([]studentGrade, 0)
-
-        for _, sg := range students {
-                studentStats = append(studentStats, sg)
-                allGrades = append(allGrades, sg.grades...)
-        }
-
-        if len(allGrades) == 0 {
-                lines = append(lines, "  │ Нет оценок")
-                lines = append(lines, "  └────────────────────────────────┘")
-                return strings.Join(lines, "\n")
-        }
-
-        // Overall class stats
-        classMin, classMax, classSum := allGrades[0], allGrades[0], 0
-        for _, g := range allGrades {
-                classSum += g
-                if g < classMin {
-                        classMin = g
+func (p *JournalPage) analysisTableCellUpdate(id widget.TableCellID, label *widget.Label) {
+        if len(p.analysisData) == 0 {
+                if id.Row == 0 && id.Col == 0 {
+                        label.SetText("Выберите ученика")
+                } else {
+                        label.SetText("")
                 }
-                if g > classMax {
-                        classMax = g
-                }
-        }
-        classAvg := float64(classSum) / float64(len(allGrades))
-
-        lines = append(lines, fmt.Sprintf("  │ Учеников: %d  │  Оценок: %d", len(studentStats), len(allGrades)))
-        lines = append(lines, fmt.Sprintf("  │ Средняя: %.1f  │  Мин: %d  │  Макс: %d", classAvg, classMin, classMax))
-
-        // Sort students by average descending
-        sort.Slice(studentStats, func(i, j int) bool {
-                return studentStats[i].avg > studentStats[j].avg
-        })
-
-        // Top 5
-        lines = append(lines, "  │")
-        lines = append(lines, "  │ Топ ученики:")
-        for i, sg := range studentStats {
-                if i >= 5 {
-                        break
-                }
-                if sg.count > 0 {
-                        spread := sg.max - sg.min
-                        bar := makeGradeBar(sg.avg, sg.min, sg.max, 10)
-                        lines = append(lines, fmt.Sprintf("  │  %d. %-25s ср:%.1f мин:%d макс:%d расп:%d %s",
-                                i+1, sg.name, sg.avg, sg.min, sg.max, spread, bar))
-                }
-        }
-
-        // Bottom 3
-        if len(studentStats) > 5 {
-                lines = append(lines, "  │")
-                lines = append(lines, "  │ Ниже среднего:")
-                start := len(studentStats) - 3
-                if start < 5 {
-                        start = 5
-                }
-                for i := start; i < len(studentStats); i++ {
-                        sg := studentStats[i]
-                        if sg.count > 0 {
-                                spread := sg.max - sg.min
-                                bar := makeGradeBar(sg.avg, sg.min, sg.max, 10)
-                                lines = append(lines, fmt.Sprintf("  │  %-25s ср:%.1f мин:%d макс:%d расп:%d %s",
-                                        sg.name, sg.avg, sg.min, sg.max, spread, bar))
-                        }
-                }
-        }
-
-        lines = append(lines, "  └────────────────────────────────┘")
-        return strings.Join(lines, "\n")
-}
-
-// makeGradeBar creates a text-based visual bar representing the grade spread.
-// Shows the student's grade position as a bar from min to max.
-func makeGradeBar(avg float64, min, max, width int) string {
-        if max <= min || width <= 0 {
-                return "[" + strings.Repeat("=", width) + "]"
-        }
-        bar := make([]rune, width)
-        for i := range bar {
-                bar[i] = ' '
-        }
-        // Mark min position
-        minPos := int(float64(min-1) / float64(max) * float64(width-1))
-        if minPos < 0 {
-                minPos = 0
-        }
-        if minPos >= width {
-                minPos = width - 1
-        }
-        // Mark max position
-        maxPos := int(float64(max-1) / float64(max) * float64(width-1))
-        if maxPos < 0 {
-                maxPos = 0
-        }
-        if maxPos >= width {
-                maxPos = width - 1
-        }
-        // Mark avg position
-        avgPos := int((avg - 1) / float64(max) * float64(width-1))
-        if avgPos < 0 {
-                avgPos = 0
-        }
-        if avgPos >= width {
-                avgPos = width - 1
-        }
-
-        // Fill range
-        for i := minPos; i <= maxPos && i < width; i++ {
-                bar[i] = '='
-        }
-        // Mark average
-        if avgPos >= 0 && avgPos < width {
-                bar[avgPos] = 'o'
-        }
-
-        return "[" + string(bar) + "]"
-}
-
-// updateStudentSelector populates the student selector for analysis mode.
-func (p *JournalPage) updateStudentSelector(students map[string]studentGrade) {
-        var names []string
-        for key, sg := range students {
-                if sg.count > 0 {
-                        names = append(names, key)
-                }
-        }
-        sort.Strings(names)
-        p.studentSelect.Options = names
-        if len(names) > 0 {
-                p.studentSelect.SetSelectedIndex(0)
-        }
-        p.studentSelect.Refresh()
-}
-
-// onStudentChange handles student selection in analysis mode.
-func (p *JournalPage) onStudentChange(selected string) {
-        if selected == "" {
-                p.analysisEntry.SetText("")
                 return
         }
 
-        // Re-fetch data for this specific student to show detailed analysis
+        // Header row
+        if id.Row == 0 {
+                headers := []string{"Предмет", "Четверть", "Ср", "Мин", "Макс", "Расброс", "vs Класс"}
+                if id.Col < len(headers) {
+                        label.TextStyle = fyne.TextStyle{Bold: true}
+                        label.SetText(headers[id.Col])
+                }
+                return
+        }
+
+        // Find the correct subject analysis
+        row := id.Row - 1
+        for _, sa := range p.analysisData {
+                if row < len(sa.subjects) {
+                        ss := sa.subjects[row]
+                        switch id.Col {
+                        case 0:
+                                label.SetText(ss.subjectName)
+                        case 1:
+                                label.SetText(ss.quarterName)
+                        case 2:
+                                if len(ss.grades) > 0 {
+                                        label.SetText(fmt.Sprintf("%.1f", ss.avg))
+                                } else {
+                                        label.SetText("—")
+                                }
+                        case 3:
+                                if len(ss.grades) > 0 {
+                                        label.SetText(fmt.Sprintf("%d", ss.min))
+                                } else {
+                                        label.SetText("—")
+                                }
+                        case 4:
+                                if len(ss.grades) > 0 {
+                                        label.SetText(fmt.Sprintf("%d", ss.max))
+                                } else {
+                                        label.SetText("—")
+                                }
+                        case 5:
+                                if len(ss.grades) > 0 {
+                                        spread := ss.max - ss.min
+                                        bar := makeGradeBar(ss.avg, ss.min, ss.max, 8)
+                                        label.SetText(fmt.Sprintf("%d %s", spread, bar))
+                                } else {
+                                        label.SetText("—")
+                                }
+                        case 6:
+                                if ss.classAvg > 0 && len(ss.grades) > 0 {
+                                        diff := ss.avg - ss.classAvg
+                                        sign := "+"
+                                        if diff < 0 {
+                                                sign = ""
+                                        }
+                                        label.SetText(fmt.Sprintf("%s%.1f (кл:%.1f)", sign, diff, ss.classAvg))
+                                } else {
+                                        label.SetText("—")
+                                }
+                        }
+                        return
+                }
+                row -= len(sa.subjects)
+        }
+
+        label.SetText("")
+}
+
+func (p *JournalPage) onStudentChange(selected string) {
+        if selected == "" {
+                p.analysisData = nil
+                p.analysisTable.Refresh()
+                p.analysisDetail.SetText("")
+                return
+        }
         go p.loadStudentAnalysis(selected)
 }
 
-// loadStudentAnalysis loads detailed grade analysis for a specific student.
-func (p *JournalPage) loadStudentAnalysis(studentKey string) {
-        // Parse the key: "StudentName|SubjectName|QuarterName"
-        parts := strings.SplitN(studentKey, "|", 3)
-        if len(parts) < 3 {
-                p.analysisEntry.SetText("Ошибка: неверный формат данных ученика")
-                return
-        }
-        studentName := parts[0]
-
-        p.analysisEntry.SetText("Загрузка анализа...")
-
+func (p *JournalPage) loadStudentAnalysis(studentName string) {
         classSelected := p.classSelect.Selected
         subjectSelected := p.subjectSelect.Selected
         quarterSelected := p.quarterSelect.Selected
 
         groups := p.getSelectedGroups(classSelected)
-        var allLines []string
 
-        // Header
-        allLines = append(allLines, "============================================================")
-        allLines = append(allLines, fmt.Sprintf("  АНАЛИЗ ОЦЕНОК: %s", studentName))
-        allLines = append(allLines, "============================================================")
-        allLines = append(allLines, "")
-
-        // Collect per-subject stats
-        type subjectStats struct {
-                subjectName string
-                quarterName string
-                groupName   string
-                grades      []int
-                min         int
-                max         int
-                avg         float64
-                missing     int
-                total       int
-                classAvg    float64
-                classMin    int
-                classMax    int
-        }
-
-        var allSubjectStats []subjectStats
+        var allSubjectStats []subjectAnalysis
 
         for _, group := range groups {
                 groupID := mapInt(group, "id")
@@ -605,7 +759,6 @@ func (p *JournalPage) loadStudentAnalysis(studentKey string) {
                                 qpropID := mapInt(quarter, "qpropId")
                                 quarterName := mapStr(quarter, "name")
 
-                                // Get dates
                                 datesData, err := p.app.apiClient.GetJournalDates(groupID, subjectID, qpropID)
                                 if err != nil {
                                         continue
@@ -615,14 +768,12 @@ func (p *JournalPage) loadStudentAnalysis(studentKey string) {
                                         continue
                                 }
 
-                                // Get students
                                 studentsData, err := p.app.apiClient.GetJournalStudents(groupID, subjectID, qpropID)
                                 if err != nil {
                                         continue
                                 }
                                 students := engine.ExtractStudents(studentsData)
 
-                                // Find target student and collect all grades for class comparison
                                 var targetGrades []int
                                 var targetMissing int
                                 var allClassGrades []int
@@ -633,22 +784,21 @@ func (p *JournalPage) loadStudentAnalysis(studentKey string) {
                                         existingMarks := engine.ExtractExistingMarks(student)
                                         markDetails := extractMarkDetails(student)
 
-                                        var studentGrades []int
-
+                                        var sGrades []int
                                         for _, day := range days {
                                                 dateID := mapStr(day, "assignmentDateId")
                                                 if _, has := existingMarks[dateID]; has {
-                                                        if markInfo, ok := markDetails[dateID]; ok && markInfo.markValue > 0 {
-                                                                studentGrades = append(studentGrades, markInfo.markValue)
+                                                        if mi, ok := markDetails[dateID]; ok && mi.markValue > 0 {
+                                                                sGrades = append(sGrades, mi.markValue)
                                                         }
                                                 }
                                         }
 
-                                        allClassGrades = append(allClassGrades, studentGrades...)
+                                        allClassGrades = append(allClassGrades, sGrades...)
 
                                         if sName == studentName {
                                                 found = true
-                                                targetGrades = studentGrades
+                                                targetGrades = sGrades
                                                 targetMissing = len(days) - len(existingMarks)
                                         }
                                 }
@@ -657,11 +807,10 @@ func (p *JournalPage) loadStudentAnalysis(studentKey string) {
                                         continue
                                 }
 
-                                // Compute target student stats
-                                ss := subjectStats{
+                                ss := subjectAnalysis{
+                                        groupName:   groupName,
                                         subjectName: subjectName,
                                         quarterName: quarterName,
-                                        groupName:   groupName,
                                         grades:      targetGrades,
                                         missing:     targetMissing,
                                         total:       len(days),
@@ -683,7 +832,6 @@ func (p *JournalPage) loadStudentAnalysis(studentKey string) {
                                         ss.avg = float64(sum) / float64(len(targetGrades))
                                 }
 
-                                // Compute class stats
                                 if len(allClassGrades) > 0 {
                                         classMin, classMax, classSum := allClassGrades[0], allClassGrades[0], 0
                                         for _, g := range allClassGrades {
@@ -705,114 +853,105 @@ func (p *JournalPage) loadStudentAnalysis(studentKey string) {
                 }
         }
 
-        if len(allSubjectStats) == 0 {
-                allLines = append(allLines, "Нет данных для анализа")
+        // Build detail text
+        var detailLines []string
+        detailLines = append(detailLines, fmt.Sprintf("АНАЛИЗ: %s", studentName))
+        detailLines = append(detailLines, strings.Repeat("=", 50))
+
+        // Overall stats
+        var allGrades []int
+        for _, ss := range allSubjectStats {
+                allGrades = append(allGrades, ss.grades...)
+        }
+        if len(allGrades) > 0 {
+                min, max, sum := allGrades[0], allGrades[0], 0
+                for _, g := range allGrades {
+                        sum += g
+                        if g < min {
+                                min = g
+                        }
+                        if g > max {
+                                max = g
+                        }
+                }
+                avg := float64(sum) / float64(len(allGrades))
+                detailLines = append(detailLines, fmt.Sprintf("Общая средняя: %.1f  |  Мин: %d  |  Макс: %d  |  Расброс: %d",
+                        avg, min, max, max-min))
+                detailLines = append(detailLines, fmt.Sprintf("Всего оценок: %d", len(allGrades)))
+                detailLines = append(detailLines, "")
+                detailLines = append(detailLines, fmt.Sprintf("Расброс: %s", makeVisualSpread(min, max, avg, 10)))
+                detailLines = append(detailLines, fmt.Sprintf("Распределение: %s", makeDistribution(allGrades)))
         } else {
-                // Overall student summary
-                var allStudentGrades []int
-                for _, ss := range allSubjectStats {
-                        allStudentGrades = append(allStudentGrades, ss.grades...)
-                }
-
-                if len(allStudentGrades) > 0 {
-                        overallMin, overallMax, overallSum := allStudentGrades[0], allStudentGrades[0], 0
-                        for _, g := range allStudentGrades {
-                                overallSum += g
-                                if g < overallMin {
-                                        overallMin = g
-                                }
-                                if g > overallMax {
-                                        overallMax = g
-                                }
-                        }
-                        overallAvg := float64(overallSum) / float64(len(allStudentGrades))
-
-                        allLines = append(allLines, "  ОБЩИЙ РЕЗУЛЬТАТ:")
-                        allLines = append(allLines, fmt.Sprintf("  ├─ Средняя оценка:     %.1f", overallAvg))
-                        allLines = append(allLines, fmt.Sprintf("  ├─ Минимальная оценка: %d", overallMin))
-                        allLines = append(allLines, fmt.Sprintf("  ├─ Максимальная оценка:%d", overallMax))
-                        allLines = append(allLines, fmt.Sprintf("  ├─ Разброс:            %d", overallMax-overallMin))
-                        allLines = append(allLines, fmt.Sprintf("  └─ Всего оценок:       %d", len(allStudentGrades)))
-                        allLines = append(allLines, "")
-                        allLines = append(allLines, fmt.Sprintf("  Расброс:  %s", makeVisualSpread(overallMin, overallMax, overallAvg, 10)))
-                        allLines = append(allLines, "")
-                }
-
-                // Per-subject breakdown
-                allLines = append(allLines, "  ПО ПРЕДМЕТАМ:")
-                allLines = append(allLines, strings.Repeat("-", 60))
-
-                for _, ss := range allSubjectStats {
-                        allLines = append(allLines, "")
-                        allLines = append(allLines, fmt.Sprintf("  ┌─ %s │ %s │ %s", ss.groupName, ss.subjectName, ss.quarterName))
-
-                        if len(ss.grades) > 0 {
-                                spread := ss.max - ss.min
-                                allLines = append(allLines, fmt.Sprintf("  │ Средняя:    %.1f", ss.avg))
-                                allLines = append(allLines, fmt.Sprintf("  │ Мин:        %d", ss.min))
-                                allLines = append(allLines, fmt.Sprintf("  │ Макс:       %d", ss.max))
-                                allLines = append(allLines, fmt.Sprintf("  │ Расброс:    %d", spread))
-                                allLines = append(allLines, fmt.Sprintf("  │ Оценок:     %d из %d (пропущено: %d)", len(ss.grades), ss.total, ss.missing))
-
-                                // Visual spread bar
-                                allLines = append(allLines, fmt.Sprintf("  │ %s", makeVisualSpread(ss.min, ss.max, ss.avg, 10)))
-
-                                // Comparison with class
-                                if ss.classAvg > 0 {
-                                        diff := ss.avg - ss.classAvg
-                                        diffSign := "+"
-                                        if diff < 0 {
-                                                diffSign = ""
-                                        }
-                                        allLines = append(allLines, fmt.Sprintf("  │ Класс ср: %.1f  %s%.1f от класса", ss.classAvg, diffSign, diff))
-                                        allLines = append(allLines, fmt.Sprintf("  │ Класс мин: %d  макс: %d", ss.classMin, ss.classMax))
-                                }
-
-                                // Grade distribution
-                                allLines = append(allLines, fmt.Sprintf("  │ Распределение: %s", makeDistribution(ss.grades)))
-
-                                // Individual grades list
-                                gradeStrs := make([]string, len(ss.grades))
-                                for i, g := range ss.grades {
-                                        gradeStrs[i] = fmt.Sprintf("%d", g)
-                                }
-                                allLines = append(allLines, fmt.Sprintf("  │ Оценки: %s", strings.Join(gradeStrs, ", ")))
-                        } else {
-                                allLines = append(allLines, "  │ Нет оценок")
-                        }
-
-                        allLines = append(allLines, "  └────────────────────────────────────")
-                }
+                detailLines = append(detailLines, "Нет оценок")
         }
 
-        result := strings.Join(allLines, "\n")
         fyne.Do(func() {
-                p.analysisEntry.SetText(result)
+                p.analysisData = []studentAnalysis{{
+                        studentName: studentName,
+                        subjects:    allSubjectStats,
+                }}
+                p.analysisTable.Refresh()
+                p.analysisDetail.SetText(strings.Join(detailLines, "\n"))
         })
 }
 
+// ─── Helper functions ─────────────────────────────────────────
+
+// makeGradeBar creates a text-based visual bar representing the grade spread.
+func makeGradeBar(avg float64, min, max, width int) string {
+        if max <= min || width <= 0 {
+                return "[" + strings.Repeat("=", width) + "]"
+        }
+        bar := make([]rune, width)
+        for i := range bar {
+                bar[i] = ' '
+        }
+        minPos := int(float64(min-1) / float64(max) * float64(width-1))
+        if minPos < 0 {
+                minPos = 0
+        }
+        if minPos >= width {
+                minPos = width - 1
+        }
+        maxPos := int(float64(max-1) / float64(max) * float64(width-1))
+        if maxPos < 0 {
+                maxPos = 0
+        }
+        if maxPos >= width {
+                maxPos = width - 1
+        }
+        avgPos := int((avg - 1) / float64(max) * float64(width-1))
+        if avgPos < 0 {
+                avgPos = 0
+        }
+        if avgPos >= width {
+                avgPos = width - 1
+        }
+        for i := minPos; i <= maxPos && i < width; i++ {
+                bar[i] = '='
+        }
+        if avgPos >= 0 && avgPos < width {
+                bar[avgPos] = 'o'
+        }
+        return "[" + string(bar) + "]"
+}
+
 // makeVisualSpread creates a visual text-based spread indicator.
-// Shows a bar from min to max with the average marked.
 func makeVisualSpread(min, max int, avg float64, scale int) string {
         if max < min || scale <= 0 {
                 return "[---]"
         }
-
-        barWidth := scale * 2 // double resolution
+        barWidth := scale * 2
         bar := make([]rune, barWidth)
         for i := range bar {
                 bar[i] = '.'
         }
-
-        // Fill the range from min to max
         for i := 0; i < barWidth; i++ {
                 pos := float64(i) / float64(barWidth-1) * float64(max)
                 if pos >= float64(min) && pos <= float64(max) {
                         bar[i] = '='
                 }
         }
-
-        // Mark average position
         avgPos := int((avg - 1) / float64(max) * float64(barWidth-1))
         if avgPos < 0 {
                 avgPos = 0
@@ -821,8 +960,6 @@ func makeVisualSpread(min, max int, avg float64, scale int) string {
                 avgPos = barWidth - 1
         }
         bar[avgPos] = 'o'
-
-        // Mark min and max
         minPos := int(float64(min-1) / float64(max) * float64(barWidth-1))
         maxPos := int(float64(max-1) / float64(max) * float64(barWidth-1))
         if minPos >= 0 && minPos < barWidth {
@@ -831,7 +968,6 @@ func makeVisualSpread(min, max int, avg float64, scale int) string {
         if maxPos >= 0 && maxPos < barWidth {
                 bar[maxPos] = ']'
         }
-
         return fmt.Sprintf("%d %s %d", min, string(bar), max)
 }
 
@@ -840,28 +976,23 @@ func makeDistribution(grades []int) string {
         if len(grades) == 0 {
                 return ""
         }
-
-        // Count grades
         counts := make(map[int]int)
         for _, g := range grades {
                 counts[g]++
         }
-
         maxCount := 0
         for _, c := range counts {
                 if c > maxCount {
                         maxCount = c
                 }
         }
-
-        var parts []string
-        // Sort grade values
         var gradeValues []int
         for g := range counts {
                 gradeValues = append(gradeValues, g)
         }
         sort.Ints(gradeValues)
 
+        var parts []string
         for _, g := range gradeValues {
                 c := counts[g]
                 barLen := 0
@@ -871,7 +1002,6 @@ func makeDistribution(grades []int) string {
                 bar := strings.Repeat("#", barLen)
                 parts = append(parts, fmt.Sprintf("%d:%s%d", g, bar, c))
         }
-
         return strings.Join(parts, " ")
 }
 
@@ -895,6 +1025,8 @@ func extractMarkDetails(student map[string]interface{}) map[string]markInfo {
         }
         return result
 }
+
+// ─── Data selection helpers ───────────────────────────────────
 
 func (p *JournalPage) getSelectedGroups(selected string) []map[string]interface{} {
         if selected == "Все классы" || selected == "" {
@@ -936,16 +1068,5 @@ func (p *JournalPage) getSelectedQuarters(selected string) []map[string]interfac
                 }
         }
         return result
-}
-
-// mapInt extracts an int field from a map[string]interface{}.
-func mapInt(m map[string]interface{}, key string) int {
-        if v, ok := m[key].(float64); ok {
-                return int(v)
-        }
-        if v, ok := m[key].(int); ok {
-                return v
-        }
-        return 0
 }
 
