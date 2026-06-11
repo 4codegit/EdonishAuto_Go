@@ -26,7 +26,7 @@ jobs:
       - name: Read version
         id: version
         run: |
-          $content = Get-Content "edonish-auto/internal/config/config.go" -Raw
+          $content = Get-Content "internal/config/config.go" -Raw
           if ($content -match 'AppVersion\s*=\s*"([^"]+)"') {
             $ver = $Matches[1]
             echo "APP_VERSION=$ver" >> $env:GITHUB_OUTPUT
@@ -39,10 +39,9 @@ jobs:
 
       - name: Build Windows binary
         run: |
-          cd edonish-auto
           $env:CGO_ENABLED="1"
           $env:CC="gcc"
-          go build -ldflags "-s -w -H windowsgui -X main.version=${{ steps.version.outputs.APP_VERSION }}" -o ../dist/edonish-auto.exe .
+          go build -ldflags "-s -w -H windowsgui -X main.version=${{ steps.version.outputs.APP_VERSION }}" -o dist/edonish-auto.exe .
         shell: pwsh
 
       - name: Report binary size
