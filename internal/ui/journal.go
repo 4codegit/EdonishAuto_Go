@@ -7,9 +7,11 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/4codegit/edonish-auto/internal/config"
 	"github.com/4codegit/edonish-auto/internal/engine"
 )
 
@@ -18,17 +20,20 @@ import (
 // journalData holds the structured data for the journal table view.
 type journalData struct {
 	groupName   string
+	groupID     int
+	subjectID   int
+	qpropID     int
 	subjectName string
 	quarterName string
-	dates       []dateCol    // column headers (dates)
-	students    []studentRow // rows (one per student)
+	dates       []dateCol
+	students    []studentRow
 }
 
 // dateCol represents a single date column in the journal.
 type dateCol struct {
 	dateID   string
-	dateStr  string // full date, e.g. "2025-01-15"
-	shortStr string // short date, e.g. "01-15"
+	dateStr  string
+	shortStr string
 }
 
 // studentRow represents a single student row with marks.
@@ -37,11 +42,22 @@ type studentRow struct {
 	name        string
 	marks       map[string]string // dateID -> display text
 	markValues  map[string]int    // dateID -> numeric mark value
+	markIDs     map[string]string // dateID -> mark ID (for deletion)
 	avg         float64
 	min         int
 	max         int
 	gradeCount  int
 	missing     int
+	// Per-student min/max override for auto-grade
+	minOverride int // 0 = use global
+	maxOverride int // 0 = use global
+}
+
+// studentGradeLimits holds per-student min/max grade settings.
+type studentGradeLimits struct {
+	studentName string
+	minGrade    int
+	maxGrade    int
 }
 
 // ─── JournalPage ──────────────────────────────────────────────
@@ -62,20 +78,45 @@ type JournalPage struct {
 	journalTable *widget.Table
 	journalData  []journalData
 
-	// Student detail popup
-	studentDetail *widget.Entry
-	detailCard    *widget.Card
+	// Student detail panel
+	studentDetail   *widget.Entry
+	detailCard      *widget.Card
 	selectedStudent string
+	detailPanel     *fyne.Container
+
+	// Per-student grade limits (min/max overrides)
+	studentLimits map[string]*studentGradeLimits // key: studentName
+
+	// Edit state
+	editDialog *dialog.CustomDialog
+	editEntry  *widget.Entry
+	editInfo   *editMarkInfo
 
 	// Layout references
-	tableScroll   *container.Scroll
-	detailPanel   *fyne.Container
-	splitLayout   *fyne.Container
+	tableScroll *container.Scroll
+	splitLayout *container.Scroll
+}
+
+// editMarkInfo holds context for a grade edit operation.
+type editMarkInfo struct {
+	groupIdx    int
+	studentIdx  int
+	dateID      string
+	dateStr     string
+	studentName string
+	oldValue    string
+	oldMarkVal  int
+	markID      string // existing mark ID for deletion
+	qpropID     int
+	studentID   int
 }
 
 // NewJournalPage creates a new journal page.
 func NewJournalPage(app *App) *JournalPage {
-	return &JournalPage{app: app}
+	return &JournalPage{
+		app:           app,
+		studentLimits: make(map[string]*studentGradeLimits),
+	}
 }
 
 // Build creates the journal view and returns the root container.
@@ -100,6 +141,11 @@ func (p *JournalPage) Build() fyne.CanvasObject {
 		p.loadJournal()
 	})
 
+	// Button to open student limits popup
+	limitsBtn := widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {
+		p.showLimitsDialog()
+	})
+
 	// ── Status label ──────────────────────────────────────
 	p.statusLabel = widget.NewLabelWithStyle("Выберите класс и предмет для загрузки журнала",
 		fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
@@ -114,8 +160,8 @@ func (p *JournalPage) Build() fyne.CanvasObject {
 			p.tableCellUpdate(id, cell.(*widget.Label))
 		},
 	)
-	p.journalTable.SetColumnWidth(0, 35)  // #
-	p.journalTable.SetColumnWidth(1, 180) // ФИО
+	p.journalTable.SetColumnWidth(0, 35)
+	p.journalTable.SetColumnWidth(1, 180)
 	p.journalTable.OnSelected = func(id widget.TableCellID) {
 		p.onCellSelected(id)
 	}
@@ -142,7 +188,8 @@ func (p *JournalPage) Build() fyne.CanvasObject {
 	p.detailPanel.Hide()
 
 	// ── Main layout ───────────────────────────────────────
-	filterRow := container.NewBorder(nil, nil, nil, refreshBtn,
+	filterRow := container.NewBorder(nil, nil, nil,
+		container.NewHBox(limitsBtn, refreshBtn),
 		container.NewGridWithColumns(3,
 			p.classSelect,
 			p.subjectSelect,
@@ -163,14 +210,14 @@ func (p *JournalPage) Build() fyne.CanvasObject {
 
 	content := container.NewBorder(header, nil, nil, nil, tableArea)
 
-	return content
+	p.splitLayout = container.NewVScroll(content)
+	return p.splitLayout
 }
 
 // ─── Filter change handlers (auto-load) ──────────────────────
 
 func (p *JournalPage) onClassChange(selected string) {
 	p.updateSubjectsForClass(selected)
-	// Auto-load if subject is also selected
 	if p.subjectSelect.Selected != "" && p.subjectSelect.Selected != "Все предметы" {
 		p.loadJournal()
 	}
@@ -268,7 +315,7 @@ func (p *JournalPage) updateSubjectsForClass(selected string) {
 func (p *JournalPage) tableRowCount() int {
 	rows := 0
 	for _, jd := range p.journalData {
-		rows += 1 // header row (group/subject/quarter title)
+		rows += 1 // title row
 		rows += 1 // date header row
 		rows += len(jd.students)
 		rows += 1 // spacer
@@ -280,9 +327,9 @@ func (p *JournalPage) tableRowCount() int {
 }
 
 func (p *JournalPage) tableColCount() int {
-	maxCols := 4 // #, ФИО, Ср, (Мин/Макс combined)
+	maxCols := 4
 	for _, jd := range p.journalData {
-		cols := 2 + len(jd.dates) + 2 // #, ФИО, dates..., Ср, Диап
+		cols := 2 + len(jd.dates) + 2
 		if cols > maxCols {
 			maxCols = cols
 		}
@@ -302,21 +349,18 @@ func (p *JournalPage) tableCellUpdate(id widget.TableCellID, label *widget.Label
 
 	rowIdx := 0
 	for _, jd := range p.journalData {
-		// Title row
 		if id.Row == rowIdx {
 			p.titleCell(id.Col, jd, label)
 			return
 		}
 		rowIdx++
 
-		// Date header row
 		if id.Row == rowIdx {
 			p.dateHeaderCell(id.Col, jd, label)
 			return
 		}
 		rowIdx++
 
-		// Student rows
 		if id.Row < rowIdx+len(jd.students) {
 			si := id.Row - rowIdx
 			p.studentCell(id.Col, jd, jd.students[si], label)
@@ -324,7 +368,6 @@ func (p *JournalPage) tableCellUpdate(id widget.TableCellID, label *widget.Label
 		}
 		rowIdx += len(jd.students)
 
-		// Spacer row
 		if id.Row == rowIdx {
 			label.SetText("")
 			return
@@ -353,7 +396,7 @@ func (p *JournalPage) dateHeaderCell(col int, jd journalData, label *widget.Labe
 	}
 	switch {
 	case col == 0:
-		label.SetText("№")
+		label.SetText("N")
 	case col == 1:
 		label.SetText("ФИО ученика")
 	case col >= 2 && col < 2+len(jd.dates):
@@ -404,38 +447,316 @@ func (p *JournalPage) studentCell(col int, jd journalData, sr studentRow, label 
 		if sr.gradeCount > 0 {
 			label.SetText(fmt.Sprintf("%.1f", sr.avg))
 		} else {
-			label.SetText("—")
+			label.SetText("-")
 		}
 	case col == 2+len(jd.dates)+1:
 		if sr.gradeCount > 0 {
 			label.SetText(fmt.Sprintf("%d-%d", sr.min, sr.max))
 		} else {
-			label.SetText("—")
+			label.SetText("-")
 		}
 	}
 }
 
-// ─── Cell click → show student detail ────────────────────────
+// ─── Cell click → edit grade or show student detail ──────────
 
 func (p *JournalPage) onCellSelected(id widget.TableCellID) {
 	if len(p.journalData) == 0 {
 		return
 	}
 
-	// Find which student was clicked
 	rowIdx := 0
-	for _, jd := range p.journalData {
+	for di, jd := range p.journalData {
 		rowIdx += 2 // skip title + date header
 
 		if id.Row >= rowIdx && id.Row < rowIdx+len(jd.students) {
 			si := id.Row - rowIdx
 			sr := jd.students[si]
+
+			// If clicked on a date column → edit grade
+			if id.Col >= 2 && id.Col < 2+len(jd.dates) {
+				dateID := jd.dates[id.Col-2].dateID
+				dateStr := jd.dates[id.Col-2].dateStr
+				p.showEditDialog(di, si, dateID, dateStr, sr)
+				return
+			}
+
+			// If clicked on name column → show student detail
+			if id.Col == 1 {
+				p.showStudentDetail(sr, jd)
+				return
+			}
+
+			// Any other column → show student detail too
 			p.showStudentDetail(sr, jd)
 			return
 		}
-		rowIdx += len(jd.students) + 1 // students + spacer
+		rowIdx += len(jd.students) + 1
 	}
 }
+
+// ─── Edit grade dialog ───────────────────────────────────────
+
+func (p *JournalPage) showEditDialog(groupIdx, studentIdx int, dateID, dateStr string, sr studentRow) {
+	oldDisplay := ""
+	oldVal := 0
+	markID := ""
+	if display, ok := sr.marks[dateID]; ok {
+		oldDisplay = display
+		oldVal = sr.markValues[dateID]
+		markID = sr.markIDs[dateID]
+	}
+
+	p.editInfo = &editMarkInfo{
+		groupIdx:    groupIdx,
+		studentIdx:  studentIdx,
+		dateID:      dateID,
+		dateStr:     dateStr,
+		studentName: sr.name,
+		oldValue:    oldDisplay,
+		oldMarkVal:  oldVal,
+		markID:      markID,
+		qpropID:     p.journalData[groupIdx].qpropID,
+		studentID:   sr.studentID,
+	}
+
+	p.editEntry = widget.NewEntry()
+	if oldVal > 0 {
+		p.editEntry.SetText(fmt.Sprintf("%d", oldVal))
+	} else {
+		p.editEntry.SetText("")
+	}
+	p.editEntry.PlaceHolder = "Оценка (1-10)"
+
+	deleteBtn := widget.NewButton("Удалить", func() {
+		p.deleteGrade()
+	})
+	if markID == "" {
+		deleteBtn.Disable()
+	}
+
+	saveBtn := widget.NewButton("Сохранить", func() {
+		p.saveGrade()
+	})
+	saveBtn.Importance = widget.HighImportance
+
+	cancelBtn := widget.NewButton("Отмена", func() {
+		if p.editDialog != nil {
+			p.editDialog.Hide()
+		}
+	})
+
+	content := container.NewVBox(
+		widget.NewLabelWithStyle(fmt.Sprintf("%s — %s", sr.name, dateStr), fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		widget.NewSeparator(),
+		container.NewHBox(
+			widget.NewLabel("Оценка:"),
+			p.editEntry,
+		),
+		widget.NewSeparator(),
+		container.NewHBox(saveBtn, deleteBtn, cancelBtn),
+	)
+
+	p.editDialog = dialog.NewCustom("Изменить оценку", "Закрыть", content, p.app.mainWindow)
+	p.editDialog.Show()
+}
+
+func (p *JournalPage) saveGrade() {
+	if p.editInfo == nil {
+		return
+	}
+
+	val := parseInt(p.editEntry.Text)
+	if val < 1 || val > 10 {
+		p.app.LogMessage(fmt.Sprintf("Оценка должна быть от 1 до 10 (введено: %d)", val), "error")
+		return
+	}
+
+	info := p.editInfo
+	if p.editDialog != nil {
+		p.editDialog.Hide()
+	}
+
+	p.statusLabel.SetText(fmt.Sprintf("Сохранение оценки %d для %s...", val, info.studentName))
+	p.app.LogMessage(fmt.Sprintf("Изменение оценки: %s — %s -> %d", info.studentName, info.dateStr, val), "info")
+
+	go func() {
+		// If there's an existing mark, delete it first
+		if info.markID != "" {
+			_, _ = p.app.apiClient.DeleteMark(info.markID)
+		}
+
+		result, err := p.app.apiClient.CreateMark(
+			info.studentID,
+			info.dateID,
+			val,
+			8, // mark_type_id
+			info.qpropID,
+		)
+
+		fyne.Do(func() {
+			if err != nil {
+				p.statusLabel.SetText(fmt.Sprintf("Ошибка: %v", err))
+				p.app.LogMessage(fmt.Sprintf("Ошибка сохранения: %v", err), "error")
+			} else if resultMap, ok := result.(map[string]interface{}); ok {
+				if errMsg, exists := resultMap["error"]; exists && errMsg != nil {
+					p.statusLabel.SetText(fmt.Sprintf("Ошибка: %v", errMsg))
+					p.app.LogMessage(fmt.Sprintf("Ошибка API: %v", errMsg), "error")
+				} else {
+					p.statusLabel.SetText(fmt.Sprintf("Оценка %d сохранена для %s", val, info.studentName))
+					p.app.LogMessage(fmt.Sprintf("Оценка %d сохранена: %s (%s)", val, info.studentName, info.dateStr), "info")
+					// Reload journal to refresh data
+					p.loadJournal()
+				}
+			} else {
+				p.statusLabel.SetText(fmt.Sprintf("Оценка %d сохранена для %s", val, info.studentName))
+				p.loadJournal()
+			}
+		})
+	}()
+}
+
+func (p *JournalPage) deleteGrade() {
+	if p.editInfo == nil || p.editInfo.markID == "" {
+		return
+	}
+
+	info := p.editInfo
+	if p.editDialog != nil {
+		p.editDialog.Hide()
+	}
+
+	p.statusLabel.SetText(fmt.Sprintf("Удаление оценки для %s...", info.studentName))
+	p.app.LogMessage(fmt.Sprintf("Удаление оценки: %s (%s)", info.studentName, info.dateStr), "info")
+
+	go func() {
+		_, err := p.app.apiClient.DeleteMark(info.markID)
+
+		fyne.Do(func() {
+			if err != nil {
+				p.statusLabel.SetText(fmt.Sprintf("Ошибка удаления: %v", err))
+				p.app.LogMessage(fmt.Sprintf("Ошибка удаления: %v", err), "error")
+			} else {
+				p.statusLabel.SetText(fmt.Sprintf("Оценка удалена для %s", info.studentName))
+				p.app.LogMessage(fmt.Sprintf("Оценка удалена: %s (%s)", info.studentName, info.dateStr), "info")
+				p.loadJournal()
+			}
+		})
+	}()
+}
+
+// ─── Student limits dialog (cube button) ─────────────────────
+
+func (p *JournalPage) showLimitsDialog() {
+	if len(p.journalData) == 0 {
+		p.app.LogMessage("Сначала загрузите журнал", "warning")
+		return
+	}
+
+	// Collect all unique student names
+	studentNames := make(map[string]bool)
+	for _, jd := range p.journalData {
+		for _, sr := range jd.students {
+			studentNames[sr.name] = true
+		}
+	}
+	if len(studentNames) == 0 {
+		p.app.LogMessage("Нет учеников", "warning")
+		return
+	}
+
+	// Build a scrollable list of student entries
+	var entries []fyne.CanvasObject
+	studentEntries := make(map[string]*limitEntry)
+
+	sortedNames := make([]string, 0, len(studentNames))
+	for name := range studentNames {
+		sortedNames = append(sortedNames, name)
+	}
+	sort.Strings(sortedNames)
+
+	for _, name := range sortedNames {
+		le := &limitEntry{}
+		le.minEntry = widget.NewEntry()
+		le.maxEntry = widget.NewEntry()
+
+		// Pre-fill with existing overrides or defaults
+		if limits, ok := p.studentLimits[name]; ok {
+			le.minEntry.SetText(fmt.Sprintf("%d", limits.minGrade))
+			le.maxEntry.SetText(fmt.Sprintf("%d", limits.maxGrade))
+		} else {
+			le.minEntry.SetText(fmt.Sprintf("%d", config.MinGrade))
+			le.maxEntry.SetText(fmt.Sprintf("%d", config.MaxGrade))
+		}
+
+		studentEntries[name] = le
+
+		row := container.NewGridWithColumns(4,
+			widget.NewLabel(name),
+			widget.NewLabel("мин:"),
+			le.minEntry,
+			le.maxEntry,
+		)
+		entries = append(entries, row)
+	}
+
+	listContent := container.NewVBox(entries...)
+	scrollList := container.NewVScroll(listContent)
+	scrollList.SetMinSize(fyne.NewSize(450, 350))
+
+	saveBtn := widget.NewButton("Сохранить", func() {
+		for name, le := range studentEntries {
+			minV := parseInt(le.minEntry.Text)
+			maxV := parseInt(le.maxEntry.Text)
+			if minV < 1 {
+				minV = config.MinGrade
+			}
+			if maxV < 1 || maxV > 10 {
+				maxV = config.MaxGrade
+			}
+			if minV > maxV {
+				minV = maxV
+			}
+			p.studentLimits[name] = &studentGradeLimits{
+				studentName: name,
+				minGrade:    minV,
+				maxGrade:    maxV,
+			}
+		}
+		p.app.LogMessage(fmt.Sprintf("Сохранены пределы оценок для %d учеников", len(studentEntries)), "info")
+		p.statusLabel.SetText(fmt.Sprintf("Пределы оценок сохранены для %d учеников", len(studentEntries)))
+	})
+	saveBtn.Importance = widget.HighImportance
+
+	closeBtn := widget.NewButton("Закрыть", func() {
+		// dialog closes itself
+	})
+
+	descLabel := widget.NewLabelWithStyle(
+		"Установите мин/макс оценки для каждого ученика.\nЭти пределы используются при автозаполнении.",
+		fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
+
+	bottomRow := container.NewHBox(saveBtn, closeBtn)
+
+	dialogContent := container.NewBorder(
+		container.NewVBox(descLabel, widget.NewSeparator()),
+		bottomRow,
+		nil, nil,
+		scrollList,
+	)
+
+	d := dialog.NewCustom("Пределы оценок по ученикам", "Закрыть", dialogContent, p.app.mainWindow)
+	d.Resize(fyne.NewSize(500, 450))
+	d.Show()
+}
+
+// limitEntry holds min/max entry widgets for a student.
+type limitEntry struct {
+	minEntry *widget.Entry
+	maxEntry *widget.Entry
+}
+
+// ─── Cell click → show student detail ────────────────────────
 
 func (p *JournalPage) showStudentDetail(sr studentRow, jd journalData) {
 	p.selectedStudent = sr.name
@@ -444,7 +765,7 @@ func (p *JournalPage) showStudentDetail(sr studentRow, jd journalData) {
 	var lines []string
 	lines = append(lines, fmt.Sprintf("Ученик: %s", sr.name))
 	lines = append(lines, fmt.Sprintf("Класс: %s  |  Предмет: %s  |  %s", jd.groupName, jd.subjectName, jd.quarterName))
-	lines = append(lines, strings.Repeat("─", 40))
+	lines = append(lines, strings.Repeat("-", 40))
 
 	if sr.gradeCount > 0 {
 		lines = append(lines, fmt.Sprintf("Средний балл: %.1f", sr.avg))
@@ -455,7 +776,6 @@ func (p *JournalPage) showStudentDetail(sr studentRow, jd journalData) {
 		lines = append(lines, makeVisualSpread(sr.min, sr.max, sr.avg, 10))
 		lines = append(lines, "")
 
-		// Distribution
 		grades := make([]int, 0, sr.gradeCount)
 		for _, v := range sr.markValues {
 			if v > 0 {
@@ -468,6 +788,12 @@ func (p *JournalPage) showStudentDetail(sr studentRow, jd journalData) {
 		}
 	} else {
 		lines = append(lines, "Нет оценок")
+	}
+
+	// Show per-student limits if set
+	if limits, ok := p.studentLimits[sr.name]; ok {
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("Пределы автозаполнения: %d - %d", limits.minGrade, limits.maxGrade))
 	}
 
 	p.studentDetail.SetText(strings.Join(lines, "\n"))
@@ -568,6 +894,13 @@ func (p *JournalPage) loadJournal() {
 							name:       studentName,
 							marks:      make(map[string]string),
 							markValues: make(map[string]int),
+							markIDs:    make(map[string]string),
+						}
+
+						// Apply per-student limits if set
+						if limits, ok := p.studentLimits[studentName]; ok {
+							sr.minOverride = limits.minGrade
+							sr.maxOverride = limits.maxGrade
 						}
 
 						var grades []int
@@ -577,6 +910,7 @@ func (p *JournalPage) loadJournal() {
 									display := engine.ParseGradeDisplay(mi.shortName, mi.markValue)
 									sr.marks[dc.dateID] = display
 									sr.markValues[dc.dateID] = mi.markValue
+									sr.markIDs[dc.dateID] = mi.markID
 									if mi.markValue > 0 {
 										grades = append(grades, mi.markValue)
 									}
@@ -610,6 +944,9 @@ func (p *JournalPage) loadJournal() {
 
 					allData = append(allData, journalData{
 						groupName:   groupName,
+						groupID:     groupID,
+						subjectID:   subjectID,
+						qpropID:     qpropID,
 						subjectName: subjectName,
 						quarterName: quarterName,
 						dates:       dateCols,
@@ -623,14 +960,13 @@ func (p *JournalPage) loadJournal() {
 			p.journalData = allData
 			p.journalTable.Refresh()
 
-			// Set date column widths
 			for _, jd := range allData {
 				for i := range jd.dates {
 					p.journalTable.SetColumnWidth(2+i, 45)
 				}
 				cols := len(jd.dates)
-				p.journalTable.SetColumnWidth(2+cols, 50)   // Ср
-				p.journalTable.SetColumnWidth(2+cols+1, 55) // Диап
+				p.journalTable.SetColumnWidth(2+cols, 50)
+				p.journalTable.SetColumnWidth(2+cols+1, 55)
 			}
 
 			if len(allData) == 0 {
@@ -640,7 +976,7 @@ func (p *JournalPage) loadJournal() {
 				for _, jd := range allData {
 					totalStudents += len(jd.students)
 				}
-				p.statusLabel.SetText(fmt.Sprintf("Загружено: %d класс/предмет/четверть, %d учеников",
+				p.statusLabel.SetText(fmt.Sprintf("Загружено: %d групп, %d учеников",
 					len(allData), totalStudents))
 			}
 		})
@@ -653,6 +989,7 @@ func (p *JournalPage) loadJournal() {
 type markInfo struct {
 	shortName string
 	markValue int
+	markID    string
 }
 
 func extractMarkDetails(student map[string]interface{}) map[string]markInfo {
@@ -663,7 +1000,8 @@ func extractMarkDetails(student map[string]interface{}) map[string]markInfo {
 				dateID := mapStr(mm, "assignmentDateId")
 				shortName := mapStr(mm, "shortName")
 				markValue := mapInt(mm, "mark")
-				result[dateID] = markInfo{shortName: shortName, markValue: markValue}
+				markID := mapStr(mm, "id")
+				result[dateID] = markInfo{shortName: shortName, markValue: markValue, markID: markID}
 			}
 		}
 	}
@@ -781,4 +1119,10 @@ func (p *JournalPage) getSelectedQuarters(selected string) []map[string]interfac
 		}
 	}
 	return result
+}
+
+// GetStudentLimits returns the per-student grade limits for auto-grade.
+// Used by the auto-grade page to apply custom min/max per student.
+func (p *JournalPage) GetStudentLimits() map[string]*studentGradeLimits {
+	return p.studentLimits
 }
