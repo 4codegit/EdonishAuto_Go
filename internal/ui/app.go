@@ -83,21 +83,24 @@ func NewApp() *App {
         a.mainWindow.Resize(fyne.NewSize(1280, 820))
         a.mainWindow.SetMaster()
 
-        // Initialize the root container — SetContent is called ONCE here.
-        // All subsequent page switches use setPage(), which only updates
-        // rootContainer.Objects and calls Refresh() (goroutine-safe).
-        a.rootContainer = container.NewStack()
-        a.mainWindow.SetContent(a.rootContainer)
-
-        // Initialize pages
+        // Initialize pages first so we have content for the root container
         a.logsPage = NewLogsPage(a)
         a.autoPage = NewAutoGradePage(a)
         a.journalPg = NewJournalPage(a)
         a.loginPage = NewLoginPage(a)
         a.schoolPage = NewSchoolPage(a)
 
-        // Show login
-        a.showLogin()
+        // Initialize the root container with the login page as initial content.
+        // SetContent is called ONCE here. All subsequent page switches use
+        // setPage(), which only updates rootContainer.Objects and calls Refresh()
+        // — this is goroutine-safe (unlike SetContent).
+        loginContent := a.loginPage.Build()
+        a.rootContainer = container.NewStack(loginContent)
+        a.mainWindow.SetContent(a.rootContainer)
+
+        // Focus login entry and load session
+        a.mainWindow.Canvas().Focus(a.loginPage.loginEntry)
+        a.loginPage.LoadSession()
 
         return a
 }
