@@ -4,16 +4,22 @@ package main
 
 import (
 	"os"
+	"runtime"
 
 	"github.com/4codegit/edonish-auto/internal/ui"
 )
 
 func main() {
-	// Force software rendering on Windows if no OpenGL driver available.
-	// This prevents crashes on systems without proper GPU/OpenGL drivers.
-	// The FYNE_RENDER=software environment variable tells Fyne to use
-	// CPU-based rendering instead of OpenGL, which is slower but compatible.
-	if os.Getenv("FYNE_RENDER") == "" {
+	// On Windows, force software rendering to avoid OpenGL driver crashes.
+	// Many Windows systems (especially VMs, older hardware, or machines
+	// with missing GPU drivers) don't have proper OpenGL support, which
+	// causes Fyne to crash on startup. Software rendering is slower but
+	// universally compatible.
+	//
+	// On Linux/macOS, OpenGL is typically available via Mesa/native drivers,
+	// so we keep hardware rendering unless the user explicitly sets
+	// FYNE_RENDER=software in their environment.
+	if runtime.GOOS == "windows" && os.Getenv("FYNE_RENDER") == "" {
 		os.Setenv("FYNE_RENDER", "software")
 	}
 
