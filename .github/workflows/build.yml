@@ -248,7 +248,8 @@ jobs:
           fyne package -os android -appID com.edonish.auto \
             -icon Icon.png \
             -name "eDonish Auto" \
-            -version ${{ steps.version.outputs.VERSION }}
+            --appVersion ${{ steps.version.outputs.VERSION }} \
+            --appBuild ${{ github.run_number }}
 
       - name: Find APK
         id: find_apk
