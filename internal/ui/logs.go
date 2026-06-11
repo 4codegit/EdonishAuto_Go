@@ -4,6 +4,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -23,13 +24,14 @@ func (p *LogsPage) Build() fyne.CanvasObject {
 	p.logEntry = widget.NewMultiLineEntry()
 	p.logEntry.SetPlaceHolder("Логи появятся здесь...")
 	p.logEntry.Wrapping = fyne.TextWrapWord
+	p.logEntry.TextStyle = fyne.TextStyle{Monospace: true}
 	p.logEntry.SetMinRowsVisible(25)
 
-	clearBtn := widget.NewButton("Очистить", func() {
+	clearBtn := widget.NewButtonWithIcon("Очистить", theme.ContentClearIcon(), func() {
 		p.app.ClearLogs()
 	})
 
-	copyBtn := widget.NewButton("Копировать всё", func() {
+	copyBtn := widget.NewButtonWithIcon("Копировать всё", theme.ContentCopyIcon(), func() {
 		windows := p.app.fyneApp.Driver().AllWindows()
 		if len(windows) > 0 {
 			windows[0].Clipboard().SetContent(p.app.GetLogText())
@@ -38,6 +40,7 @@ func (p *LogsPage) Build() fyne.CanvasObject {
 	})
 
 	toolbar := container.NewHBox(
+		widget.NewIcon(theme.DocumentIcon()),
 		widget.NewLabelWithStyle("Логи", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		layout.NewSpacer(),
 		copyBtn,

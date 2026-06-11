@@ -9,6 +9,8 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/4codegit/edonish-auto/internal/config"
 )
 
 // LoginPage holds the login screen UI components.
@@ -29,7 +31,8 @@ func NewLoginPage(app *App) *LoginPage {
 // Build creates the login view and returns the root container.
 func (p *LoginPage) Build() fyne.CanvasObject {
 	p.loginEntry = widget.NewEntry()
-	p.loginEntry.SetPlaceHolder("Логин (ID)")
+	p.loginEntry.SetPlaceHolder("Логин (ID телефона)")
+	p.loginEntry.Wrapping = fyne.TextWrapWord
 
 	p.passEntry = widget.NewPasswordEntry()
 	p.passEntry.SetPlaceHolder("Пароль")
@@ -45,16 +48,18 @@ func (p *LoginPage) Build() fyne.CanvasObject {
 	})
 	p.loginBtn.Importance = widget.HighImportance
 
-	// Logo
+	// Logo icon
 	icon := canvas.NewImageFromResource(theme.ComputerIcon())
 	icon.FillMode = canvas.ImageFillContain
-	icon.SetMinSize(fyne.NewSize(80, 80))
+	icon.SetMinSize(fyne.NewSize(96, 96))
 
+	// Title and subtitle
 	title := widget.NewLabelWithStyle("eDonish Auto", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
-	subtitle := widget.NewLabel("Автоматизация электронного журнала")
+	subtitle := widget.NewLabel("Автоматизация электронного журнала edonish.tj")
 	subtitle.Alignment = fyne.TextAlignCenter
+	subtitle.TextStyle = fyne.TextStyle{Italic: true}
 
-	versionLabel := widget.NewLabel(fmt.Sprintf("v0.1.0"))
+	versionLabel := widget.NewLabel(fmt.Sprintf("v%s", config.AppVersion))
 	versionLabel.Alignment = fyne.TextAlignCenter
 	versionLabel.TextStyle = fyne.TextStyle{Italic: true}
 
@@ -63,9 +68,18 @@ func (p *LoginPage) Build() fyne.CanvasObject {
 	shortcut.TextStyle = fyne.TextStyle{Italic: true}
 
 	// Login form card
-	formCard := widget.NewCard("", "", container.NewVBox(
+	formCard := widget.NewCard("Авторизация", "", container.NewVBox(
+		container.NewHBox(
+			widget.NewIcon(theme.AccountIcon()),
+			widget.NewLabelWithStyle("Логин", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		),
 		p.loginEntry,
+		container.NewHBox(
+			widget.NewIcon(theme.PasswordIcon()),
+			widget.NewLabelWithStyle("Пароль", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		),
 		p.passEntry,
+		widget.NewSeparator(),
 		p.rememberChk,
 		p.loginBtn,
 		container.NewCenter(shortcut),
@@ -105,6 +119,7 @@ func (p *LoginPage) LoadSession() {
 // doLogin handles the login button press.
 // All UI updates from the background goroutine are scheduled via fyne.Do
 // to ensure they run on the main goroutine (required since Fyne v2.5).
+// Page switches use setPage() which is goroutine-safe.
 func (p *LoginPage) doLogin() {
 	loginID := p.loginEntry.Text
 	password := p.passEntry.Text
@@ -138,6 +153,7 @@ func (p *LoginPage) doLogin() {
 			p.app.apiClient.SetSchool(savedSchoolID)
 		}
 
+		// setPage() is goroutine-safe (uses rootContainer.Refresh)
 		fyne.Do(func() {
 			p.app.onLoginSuccess(userInfo)
 		})

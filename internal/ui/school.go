@@ -25,36 +25,24 @@ func NewSchoolPage(app *App) *SchoolPage {
 }
 
 // SetSchools builds the school selection view and returns the root container.
-// Uses Button widgets instead of widget.List to avoid type assertion panics.
 func (p *SchoolPage) SetSchools(schools []api.School) fyne.CanvasObject {
 	p.schools = schools
 
 	icon := canvas.NewImageFromResource(theme.ComputerIcon())
 	icon.FillMode = canvas.ImageFillContain
-	icon.SetMinSize(fyne.NewSize(64, 64))
+	icon.SetMinSize(fyne.NewSize(80, 80))
 
 	title := widget.NewLabelWithStyle("Выберите школу", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 	subtitle := widget.NewLabel(fmt.Sprintf("Найдено школ: %d. Нажмите для выбора.", len(schools)))
 	subtitle.Alignment = fyne.TextAlignCenter
+	subtitle.TextStyle = fyne.TextStyle{Italic: true}
 
 	// Build a card with a button for each school
 	var schoolButtons []fyne.CanvasObject
 	for i := range schools {
 		school := schools[i] // capture for closure
 
-		roleDisplay := school.Role
-		switch roleDisplay {
-		case "classroom-teacher":
-			roleDisplay = "Классный руководитель"
-		case "teacher":
-			roleDisplay = "Учитель"
-		case "school_admin":
-			roleDisplay = "Администратор школы"
-		case "director":
-			roleDisplay = "Директор"
-		case "headteacher":
-			roleDisplay = "Завуч"
-		}
+		roleDisplay := translateRole(school.Role)
 
 		schoolNameLabel := widget.NewLabelWithStyle(school.Name, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 		schoolDetailLabel := widget.NewLabel(fmt.Sprintf("Роль: %s  |  ID: %d", roleDisplay, school.ID))
@@ -64,6 +52,7 @@ func (p *SchoolPage) SetSchools(schools []api.School) fyne.CanvasObject {
 			p.app.apiClient.SetSchool(school.ID)
 			p.app.LogMessage(fmt.Sprintf("Выбрана школа: %s (ID: %d)", school.Name, school.ID), "info")
 			p.app.SaveSessionSchool(school.ID)
+			// showDashboard uses setPage() which is goroutine-safe
 			p.app.showDashboard(p.app.apiClient.UserInfo)
 		})
 		selectBtn.Importance = widget.HighImportance

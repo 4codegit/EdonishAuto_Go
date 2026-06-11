@@ -2,463 +2,513 @@
 package ui
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"sync"
-	"time"
+        "encoding/json"
+        "fmt"
+        "os"
+        "sync"
+        "time"
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/theme"
-	"fyne.io/fyne/v2/widget"
+        "fyne.io/fyne/v2"
+        "fyne.io/fyne/v2/app"
+        "fyne.io/fyne/v2/canvas"
+        "fyne.io/fyne/v2/container"
+        "fyne.io/fyne/v2/theme"
+        "fyne.io/fyne/v2/widget"
 
-	"github.com/4codegit/edonish-auto/internal/api"
-	"github.com/4codegit/edonish-auto/internal/config"
-	"github.com/4codegit/edonish-auto/internal/engine"
+        "github.com/4codegit/edonish-auto/internal/api"
+        "github.com/4codegit/edonish-auto/internal/config"
+        "github.com/4codegit/edonish-auto/internal/engine"
 )
 
 // App is the main application state coordinator.
 type App struct {
-	fyneApp    fyne.App
-	mainWindow fyne.Window
-	apiClient  *api.Client
-	engine     *engine.Engine
+        fyneApp    fyne.App
+        mainWindow fyne.Window
+        apiClient  *api.Client
+        engine     *engine.Engine
 
-	// Data
-	journalOptions  interface{}
-	groupsData      []map[string]interface{}
-	quartersData    []map[string]interface{}
-	teacherSubjects []map[string]interface{}
+        // Root container for goroutine-safe page switching.
+        // SetContent is called ONCE at startup; all page switches
+        // update rootContainer.Objects and call Refresh().
+        rootContainer *container.Stack
 
-	// State
-	loggedIn    bool
-	currentPlan *engine.GradePlan
-	loadingData bool
+        // Data
+        journalOptions  interface{}
+        groupsData      []map[string]interface{}
+        quartersData    []map[string]interface{}
+        teacherSubjects []map[string]interface{}
 
-	// UI Components
-	loginPage  *LoginPage
-	autoPage   *AutoGradePage
-	journalPg  *JournalPage
-	logsPage   *LogsPage
-	schoolPage *SchoolPage
+        // State
+        loggedIn    bool
+        currentPlan *engine.GradePlan
+        loadingData bool
 
-	// Tab container for navigation
-	tabs *container.AppTabs
+        // UI Components
+        loginPage  *LoginPage
+        autoPage   *AutoGradePage
+        journalPg  *JournalPage
+        logsPage   *LogsPage
+        schoolPage *SchoolPage
 
-	// Status bar
-	statusLabel *widget.Label
-	schoolLabel *widget.Label
+        // Tab container for navigation
+        tabs *container.AppTabs
 
-	// School selector in header
-	schoolSelect *widget.Select
+        // Status bar
+        statusLabel *widget.Label
+        schoolLabel *widget.Label
 
-	// Log buffer
-	logMutex  sync.Mutex
-	logBuffer []string
+        // School selector in header
+        schoolSelect *widget.Select
 
-	// Dark mode state
-	isDarkTheme bool
+        // Log buffer
+        logMutex  sync.Mutex
+        logBuffer []string
+
+        // Dark mode state
+        isDarkTheme bool
 }
 
 // NewApp creates a new application instance.
 func NewApp() *App {
-	a := &App{
-		fyneApp:   app.NewWithID("com.edonish.auto"),
-		apiClient: api.NewClient(),
-		logBuffer: make([]string, 0),
-	}
-	a.engine = engine.NewEngine(a.apiClient)
-	a.engine.SetCallbacks(a.onProgress, a.onLog)
+        a := &App{
+                fyneApp:   app.NewWithID("com.edonish.auto"),
+                apiClient: api.NewClient(),
+                logBuffer: make([]string, 0),
+        }
+        a.engine = engine.NewEngine(a.apiClient)
+        a.engine.SetCallbacks(a.onProgress, a.onLog)
 
-	// Set up the main window
-	a.mainWindow = a.fyneApp.NewWindow(fmt.Sprintf("%s v%s", config.AppName, config.AppVersion))
-	a.mainWindow.Resize(fyne.NewSize(1280, 820))
-	a.mainWindow.SetMaster()
+        // Set up the main window
+        a.mainWindow = a.fyneApp.NewWindow(fmt.Sprintf("%s v%s", config.AppName, config.AppVersion))
+        a.mainWindow.Resize(fyne.NewSize(1280, 820))
+        a.mainWindow.SetMaster()
 
-	// Initialize pages
-	a.logsPage = NewLogsPage(a)
-	a.autoPage = NewAutoGradePage(a)
-	a.journalPg = NewJournalPage(a)
-	a.loginPage = NewLoginPage(a)
-	a.schoolPage = NewSchoolPage(a)
+        // Initialize the root container — SetContent is called ONCE here.
+        // All subsequent page switches use setPage(), which only updates
+        // rootContainer.Objects and calls Refresh() (goroutine-safe).
+        a.rootContainer = container.NewStack()
+        a.mainWindow.SetContent(a.rootContainer)
 
-	// Show login
-	a.showLogin()
+        // Initialize pages
+        a.logsPage = NewLogsPage(a)
+        a.autoPage = NewAutoGradePage(a)
+        a.journalPg = NewJournalPage(a)
+        a.loginPage = NewLoginPage(a)
+        a.schoolPage = NewSchoolPage(a)
 
-	return a
+        // Show login
+        a.showLogin()
+
+        return a
 }
 
 // Run starts the application event loop.
 func (a *App) Run() {
-	a.mainWindow.ShowAndRun()
+        a.mainWindow.ShowAndRun()
+}
+
+// setPage swaps the visible page in the root container.
+// This is goroutine-safe: it only updates Objects and calls Refresh(),
+// which is safe to call from any goroutine (unlike SetContent).
+func (a *App) setPage(obj fyne.CanvasObject) {
+        a.rootContainer.Objects = []fyne.CanvasObject{obj}
+        a.rootContainer.Refresh()
 }
 
 // showLogin displays the login screen.
 func (a *App) showLogin() {
-	a.mainWindow.SetContent(a.loginPage.Build())
-	a.mainWindow.Canvas().Focus(a.loginPage.loginEntry)
-	a.loginPage.LoadSession()
+        a.setPage(a.loginPage.Build())
+        a.mainWindow.Canvas().Focus(a.loginPage.loginEntry)
+        a.loginPage.LoadSession()
 }
 
 // onLoginSuccess handles the post-login flow.
 // If the user has multiple schools, show the school chooser;
 // otherwise go straight to the dashboard.
 func (a *App) onLoginSuccess(userInfo *api.UserInfo) {
-	if a.apiClient.HasMultipleSchools() {
-		a.showSchoolSelection()
-	} else {
-		a.showDashboard(userInfo)
-	}
+        if a.apiClient.HasMultipleSchools() {
+                a.showSchoolSelection()
+        } else {
+                a.showDashboard(userInfo)
+        }
 }
 
 // showSchoolSelection displays the school selection screen.
 func (a *App) showSchoolSelection() {
-	schools := a.apiClient.GetSchools()
-	content := a.schoolPage.SetSchools(schools)
-	a.mainWindow.SetContent(content)
-	a.LogMessage(fmt.Sprintf("Найдено %d школ — выберите школу", len(schools)), "info")
+        schools := a.apiClient.GetSchools()
+        content := a.schoolPage.SetSchools(schools)
+        a.setPage(content)
+        a.LogMessage(fmt.Sprintf("Найдено %d школ — выберите школу", len(schools)), "info")
 }
 
 // showDashboard displays the main dashboard after login.
 func (a *App) showDashboard(userInfo *api.UserInfo) {
-	a.loggedIn = true
+        a.loggedIn = true
 
-	// Build tab pages
-	a.tabs = container.NewAppTabs(
-		container.NewTabItem("Авто-оценки", a.autoPage.Build()),
-		container.NewTabItem("Журнал", a.journalPg.Build()),
-		container.NewTabItem("Логи", a.logsPage.Build()),
-	)
+        // Build tab pages
+        a.tabs = container.NewAppTabs(
+                container.NewTabItem("Авто-оценки", a.autoPage.Build()),
+                container.NewTabItem("Журнал", a.journalPg.Build()),
+                container.NewTabItem("Логи", a.logsPage.Build()),
+        )
 
-	// App bar with user info and actions
-	userName := fmt.Sprintf("%s %s", userInfo.LastName, userInfo.FirstName)
-	roleDisplay := a.apiClient.Role
-	switch roleDisplay {
-	case "classroom-teacher":
-		roleDisplay = "Кл. руководитель"
-	case "teacher":
-		roleDisplay = "Учитель"
-	case "school_admin":
-		roleDisplay = "Админ"
-	case "director":
-		roleDisplay = "Директор"
-	}
+        // App bar with user info and actions
+        userName := fmt.Sprintf("%s %s", userInfo.LastName, userInfo.FirstName)
+        roleDisplay := a.apiClient.Role
+        roleDisplay = translateRole(roleDisplay)
 
-	a.schoolLabel = widget.NewLabel(fmt.Sprintf("Школа: %d (%s)", a.apiClient.SchoolID, roleDisplay))
-	a.statusLabel = widget.NewLabel("Готов")
+        a.schoolLabel = widget.NewLabel(fmt.Sprintf("Школа: %d (%s)", a.apiClient.SchoolID, roleDisplay))
+        a.statusLabel = widget.NewLabelWithStyle("Готов", fyne.TextAlignLeading, fyne.TextStyle{Bold: false})
 
-	// Theme toggle
-	themeBtn := widget.NewButton("Тема", func() {
-		a.isDarkTheme = !a.isDarkTheme
-		if a.isDarkTheme {
-			a.fyneApp.Settings().SetTheme(theme.DarkTheme())
-		} else {
-			a.fyneApp.Settings().SetTheme(theme.DefaultTheme())
-		}
-	})
+        // Theme toggle icon button
+        themeIcon := theme.DarkThemeIcon()
+        themeBtn := widget.NewButtonWithIcon("", themeIcon, func() {
+                a.isDarkTheme = !a.isDarkTheme
+                if a.isDarkTheme {
+                        a.fyneApp.Settings().SetTheme(theme.DarkTheme())
+                } else {
+                        a.fyneApp.Settings().SetTheme(theme.DefaultTheme())
+                }
+        })
 
-	// Logout button
-	logoutBtn := widget.NewButton("Выйти", func() {
-		a.onLogout()
-	})
+        // Logout button
+        logoutBtn := widget.NewButtonWithIcon("Выйти", theme.LogoutIcon(), func() {
+                a.onLogout()
+        })
 
-	// Header layout
-	headerLeft := container.NewHBox(
-		widget.NewLabelWithStyle(fmt.Sprintf("%s v%s", config.AppName, config.AppVersion), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		widget.NewSeparator(),
-		widget.NewLabel(userName),
-		a.schoolLabel,
-	)
+        // User avatar initial
+        initial := "?"
+        if len(userInfo.FirstName) > 0 {
+                initial = string([]rune(userInfo.FirstName)[0])
+        } else if len(userInfo.LastName) > 0 {
+                initial = string([]rune(userInfo.LastName)[0])
+        }
+        avatarText := canvas.NewText(initial, theme.ForegroundColor())
+        avatarText.TextStyle = fyne.TextStyle{Bold: true}
+        avatarText.Alignment = fyne.TextAlignCenter
+        avatarText.TextSize = 20
 
-	headerRight := container.NewHBox(
-		a.statusLabel,
-		themeBtn,
-		logoutBtn,
-	)
+        // Header layout
+        headerLeft := container.NewHBox(
+                widget.NewIcon(theme.ComputerIcon()),
+                widget.NewLabelWithStyle(fmt.Sprintf("%s v%s", config.AppName, config.AppVersion), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+                widget.NewSeparator(),
+                container.NewCenter(avatarText),
+                widget.NewLabel(userName),
+                a.schoolLabel,
+        )
 
-	// School selector (only if multiple schools)
-	if a.apiClient.HasMultipleSchools() {
-		schoolOpts := make([]string, len(a.apiClient.GetSchools()))
-		for i, s := range a.apiClient.GetSchools() {
-			schoolOpts[i] = s.Name
-		}
-		a.schoolSelect = widget.NewSelect(schoolOpts, func(selected string) {
-			a.onSchoolChange(selected)
-		})
-		// Set current school as selected
-		for i, s := range a.apiClient.GetSchools() {
-			if s.ID == a.apiClient.SchoolID {
-				a.schoolSelect.SetSelectedIndex(i)
-				break
-			}
-		}
-		headerLeft.Add(widget.NewLabel("Школа:"))
-		headerLeft.Add(a.schoolSelect)
-	}
+        headerRight := container.NewHBox(
+                a.statusLabel,
+                widget.NewSeparator(),
+                themeBtn,
+                logoutBtn,
+        )
 
-	header := container.NewBorder(nil, nil, headerLeft, headerRight)
+        // School selector (only if multiple schools)
+        if a.apiClient.HasMultipleSchools() {
+                schoolOpts := make([]string, len(a.apiClient.GetSchools()))
+                for i, s := range a.apiClient.GetSchools() {
+                        schoolOpts[i] = s.Name
+                }
+                a.schoolSelect = widget.NewSelect(schoolOpts, func(selected string) {
+                        a.onSchoolChange(selected)
+                })
+                // Set current school as selected
+                for i, s := range a.apiClient.GetSchools() {
+                        if s.ID == a.apiClient.SchoolID {
+                                a.schoolSelect.SetSelectedIndex(i)
+                                break
+                        }
+                }
+                headerLeft.Add(widget.NewSeparator())
+                headerLeft.Add(widget.NewLabel("Школа:"))
+                headerLeft.Add(a.schoolSelect)
+        }
 
-	content := container.NewBorder(header, nil, nil, nil, a.tabs)
-	a.mainWindow.SetContent(content)
+        header := container.NewBorder(nil, nil, headerLeft, headerRight)
+        header.Resize(fyne.NewSize(1280, 48))
 
-	// Load initial data
-	a.LogMessage("Загрузка данных журнала...", "info")
-	go a.loadInitialData()
+        content := container.NewBorder(header, nil, nil, nil, a.tabs)
+        a.setPage(content)
+
+        // Load initial data
+        a.LogMessage("Загрузка данных журнала...", "info")
+        go a.loadInitialData()
+}
+
+// translateRole converts role API names to Russian display names.
+func translateRole(role string) string {
+        switch role {
+        case "classroom-teacher":
+                return "Кл. руководитель"
+        case "teacher":
+                return "Учитель"
+        case "school_admin":
+                return "Админ"
+        case "director":
+                return "Директор"
+        case "headteacher":
+                return "Завуч"
+        default:
+                return role
+        }
 }
 
 // onSchoolChange handles the school selector change.
 func (a *App) onSchoolChange(selected string) {
-	schools := a.apiClient.GetSchools()
-	for _, s := range schools {
-		if s.Name == selected {
-			if s.ID == a.apiClient.SchoolID {
-				return // already selected
-			}
-			a.apiClient.SetSchool(s.ID)
-			a.LogMessage(fmt.Sprintf("Переключение на школу: %s (ID: %d)", s.Name, s.ID), "info")
-			a.SaveSessionSchool(s.ID)
+        schools := a.apiClient.GetSchools()
+        for _, s := range schools {
+                if s.Name == selected {
+                        if s.ID == a.apiClient.SchoolID {
+                                return // already selected
+                        }
+                        a.apiClient.SetSchool(s.ID)
+                        a.LogMessage(fmt.Sprintf("Переключение на школу: %s (ID: %d)", s.Name, s.ID), "info")
+                        a.SaveSessionSchool(s.ID)
 
-			// Update school label
-			if a.schoolLabel != nil {
-				roleDisplay := s.Role
-				switch roleDisplay {
-				case "classroom-teacher":
-					roleDisplay = "Кл. руководитель"
-				case "teacher":
-					roleDisplay = "Учитель"
-				case "school_admin":
-					roleDisplay = "Админ"
-				case "director":
-					roleDisplay = "Директор"
-				}
-				a.schoolLabel.SetText(fmt.Sprintf("Школа: %d (%s)", s.ID, roleDisplay))
-			}
+                        // Update school label
+                        if a.schoolLabel != nil {
+                                a.schoolLabel.SetText(fmt.Sprintf("Школа: %d (%s)", s.ID, translateRole(s.Role)))
+                        }
 
-			// Stop any running engine
-			if a.engine.IsRunning() {
-				a.engine.Stop()
-			}
-			a.currentPlan = nil
+                        // Stop any running engine
+                        if a.engine.IsRunning() {
+                                a.engine.Stop()
+                        }
+                        a.currentPlan = nil
 
-			// Clear old data and reload
-			a.groupsData = nil
-			a.quartersData = nil
-			a.teacherSubjects = nil
-			a.autoPage.UpdateDropdowns()
-			a.journalPg.UpdateDropdowns()
+                        // Clear old data and reload
+                        a.groupsData = nil
+                        a.quartersData = nil
+                        a.teacherSubjects = nil
+                        a.autoPage.UpdateDropdowns()
+                        a.journalPg.UpdateDropdowns()
 
-			go a.loadInitialData()
-			return
-		}
-	}
+                        go a.loadInitialData()
+                        return
+                }
+        }
 }
 
 // loadInitialData loads journal options and populates dropdowns.
 func (a *App) loadInitialData() {
-	a.loadingData = true
-	defer func() { a.loadingData = false }()
+        a.loadingData = true
+        defer func() { a.loadingData = false }()
 
-	options, err := a.apiClient.GetJournalOptions()
-	if err != nil {
-		a.LogMessage(fmt.Sprintf("Ошибка загрузки: %v", err), "error")
-		return
-	}
-	a.journalOptions = options
+        options, err := a.apiClient.GetJournalOptions()
+        if err != nil {
+                a.LogMessage(fmt.Sprintf("Ошибка загрузки: %v", err), "error")
+                return
+        }
+        a.journalOptions = options
 
-	// Parse groups and subjects
-	a.groupsData = nil
-	a.teacherSubjects = nil
-	subjectsSet := make(map[string]map[string]interface{})
+        // Parse groups and subjects
+        a.groupsData = nil
+        a.teacherSubjects = nil
+        subjectsSet := make(map[string]map[string]interface{})
 
-	if optionsMap, ok := options.(map[string]interface{}); ok {
-		if groups, ok := optionsMap["groups"].([]interface{}); ok {
-			for _, g := range groups {
-				if gm, ok := g.(map[string]interface{}); ok {
-					groupName := fmt.Sprintf("%s%s", mapStr(gm, "number"), mapStr(gm, "name"))
-					a.groupsData = append(a.groupsData, map[string]interface{}{
-						"id":       gm["id"],
-						"name":     groupName,
-						"number":   gm["number"],
-						"group":    gm["name"],
-						"edit":     gm["edit"],
-						"myClass":  gm["myClass"],
-						"subjects": gm["subjects"],
-					})
-					// Extract subjects
-					if subjects, ok := gm["subjects"].([]interface{}); ok {
-						for _, s := range subjects {
-							if sm, ok := s.(map[string]interface{}); ok {
-								key := fmt.Sprintf("%v", sm["subjectId"])
-								if _, exists := subjectsSet[key]; !exists {
-									subjectsSet[key] = map[string]interface{}{
-										"subjectId":   sm["subjectId"],
-										"subjectName": sm["subjectName"],
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
+        if optionsMap, ok := options.(map[string]interface{}); ok {
+                if groups, ok := optionsMap["groups"].([]interface{}); ok {
+                        for _, g := range groups {
+                                if gm, ok := g.(map[string]interface{}); ok {
+                                        groupName := fmt.Sprintf("%s%s", mapStr(gm, "number"), mapStr(gm, "name"))
+                                        a.groupsData = append(a.groupsData, map[string]interface{}{
+                                                "id":       gm["id"],
+                                                "name":     groupName,
+                                                "number":   gm["number"],
+                                                "group":    gm["name"],
+                                                "edit":     gm["edit"],
+                                                "myClass":  gm["myClass"],
+                                                "subjects": gm["subjects"],
+                                        })
+                                        // Extract subjects
+                                        if subjects, ok := gm["subjects"].([]interface{}); ok {
+                                                for _, s := range subjects {
+                                                        if sm, ok := s.(map[string]interface{}); ok {
+                                                                key := fmt.Sprintf("%v", sm["subjectId"])
+                                                                if _, exists := subjectsSet[key]; !exists {
+                                                                        subjectsSet[key] = map[string]interface{}{
+                                                                                "subjectId":   sm["subjectId"],
+                                                                                "subjectName": sm["subjectName"],
+                                                                        }
+                                                                }
+                                                        }
+                                                }
+                                        }
+                                }
+                        }
+                }
+        }
 
-	for _, s := range subjectsSet {
-		a.teacherSubjects = append(a.teacherSubjects, s)
-	}
+        for _, s := range subjectsSet {
+                a.teacherSubjects = append(a.teacherSubjects, s)
+        }
 
-	// Load quarters
-	quarters, err := a.apiClient.GetQuarters()
-	if err != nil {
-		a.LogMessage(fmt.Sprintf("Ошибка загрузки четвертей: %v", err), "error")
-	} else {
-		for _, q := range quarters {
-			if qm, ok := q.(map[string]interface{}); ok {
-				a.quartersData = append(a.quartersData, qm)
-			}
-		}
-	}
+        // Load quarters
+        quarters, err := a.apiClient.GetQuarters()
+        if err != nil {
+                a.LogMessage(fmt.Sprintf("Ошибка загрузки четвертей: %v", err), "error")
+        } else {
+                for _, q := range quarters {
+                        if qm, ok := q.(map[string]interface{}); ok {
+                                a.quartersData = append(a.quartersData, qm)
+                        }
+                }
+        }
 
-	msg := fmt.Sprintf("Загружено: %d классов, %d предметов", len(a.groupsData), len(a.teacherSubjects))
-	a.LogMessage(msg, "info")
+        msg := fmt.Sprintf("Загружено: %d классов, %d предметов", len(a.groupsData), len(a.teacherSubjects))
+        a.LogMessage(msg, "info")
 
-	// Update all dropdowns on the main goroutine
-	fyne.Do(func() {
-		a.autoPage.UpdateDropdowns()
-		a.journalPg.UpdateDropdowns()
-	})
+        // Update all dropdowns on the main goroutine
+        fyne.Do(func() {
+                a.autoPage.UpdateDropdowns()
+                a.journalPg.UpdateDropdowns()
+                if a.statusLabel != nil {
+                        a.statusLabel.SetText(msg)
+                }
+        })
 }
 
 // onLogout handles user logout.
 func (a *App) onLogout() {
-	if a.engine.IsRunning() {
-		a.engine.Stop()
-	}
-	a.loggedIn = false
-	a.currentPlan = nil
-	a.apiClient = api.NewClient()
-	a.engine = engine.NewEngine(a.apiClient)
-	a.engine.SetCallbacks(a.onProgress, a.onLog)
-	a.groupsData = nil
-	a.quartersData = nil
-	a.teacherSubjects = nil
-	a.showLogin()
+        if a.engine.IsRunning() {
+                a.engine.Stop()
+        }
+        a.loggedIn = false
+        a.currentPlan = nil
+        a.apiClient = api.NewClient()
+        a.engine = engine.NewEngine(a.apiClient)
+        a.engine.SetCallbacks(a.onProgress, a.onLog)
+        a.groupsData = nil
+        a.quartersData = nil
+        a.teacherSubjects = nil
+        a.showLogin()
 }
 
 // onProgress handles progress updates from the engine.
 func (a *App) onProgress(plan *engine.GradePlan) {
-	fyne.Do(func() {
-		a.autoPage.UpdateProgress(plan)
-	})
+        fyne.Do(func() {
+                a.autoPage.UpdateProgress(plan)
+        })
 }
 
 // onLog handles log messages from the engine.
 func (a *App) onLog(message, level string) {
-	a.LogMessage(message, level)
+        a.LogMessage(message, level)
 }
 
 // LogMessage adds a message to the log buffer and updates the logs page.
 func (a *App) LogMessage(message, level string) {
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	entry := fmt.Sprintf("%s [%s] %s", timestamp, level, message)
+        timestamp := time.Now().Format("2006-01-02 15:04:05")
+        entry := fmt.Sprintf("%s [%s] %s", timestamp, level, message)
 
-	a.logMutex.Lock()
-	a.logBuffer = append(a.logBuffer, entry)
-	a.logMutex.Unlock()
+        a.logMutex.Lock()
+        a.logBuffer = append(a.logBuffer, entry)
+        a.logMutex.Unlock()
 
-	// Update logs page
-	if a.logsPage != nil {
-		a.logsPage.AppendLog(entry)
-	}
+        // Update logs page
+        if a.logsPage != nil {
+                a.logsPage.AppendLog(entry)
+        }
 }
 
 // GetLogText returns all log entries as a single string.
 func (a *App) GetLogText() string {
-	a.logMutex.Lock()
-	defer a.logMutex.Unlock()
-	result := ""
-	for _, line := range a.logBuffer {
-		result += line + "\n"
-	}
-	return result
+        a.logMutex.Lock()
+        defer a.logMutex.Unlock()
+        result := ""
+        for _, line := range a.logBuffer {
+                result += line + "\n"
+        }
+        return result
 }
 
 // ClearLogs clears all log entries.
 func (a *App) ClearLogs() {
-	a.logMutex.Lock()
-	a.logBuffer = make([]string, 0)
-	a.logMutex.Unlock()
-	if a.logsPage != nil {
-		a.logsPage.Clear()
-	}
+        a.logMutex.Lock()
+        a.logBuffer = make([]string, 0)
+        a.logMutex.Unlock()
+        if a.logsPage != nil {
+                a.logsPage.Clear()
+        }
 }
 
 // SaveSession saves login credentials to disk.
 func (a *App) SaveSession(loginID, password string, remember bool) {
-	data := map[string]interface{}{
-		"login_id":  loginID,
-		"password":  password,
-		"remember":  remember,
-		"school_id": a.apiClient.SchoolID,
-	}
-	if !remember {
-		data["login_id"] = ""
-		data["password"] = ""
-	}
-	fileData, _ := json.MarshalIndent(data, "", "  ")
-	_ = os.WriteFile(config.SessionFile(), fileData, 0600)
+        data := map[string]interface{}{
+                "login_id":  loginID,
+                "password":  password,
+                "remember":  remember,
+                "school_id": a.apiClient.SchoolID,
+        }
+        if !remember {
+                data["login_id"] = ""
+                data["password"] = ""
+        }
+        fileData, _ := json.MarshalIndent(data, "", "  ")
+        _ = os.WriteFile(config.SessionFile(), fileData, 0600)
 }
 
 // SaveSessionSchool saves the selected school ID to the session file.
 func (a *App) SaveSessionSchool(schoolID int) {
-	// Read existing session
-	data, err := os.ReadFile(config.SessionFile())
-	if err != nil {
-		session := map[string]interface{}{
-			"school_id": schoolID,
-		}
-		fileData, _ := json.MarshalIndent(session, "", "  ")
-		_ = os.WriteFile(config.SessionFile(), fileData, 0600)
-		return
-	}
+        // Read existing session
+        data, err := os.ReadFile(config.SessionFile())
+        if err != nil {
+                session := map[string]interface{}{
+                        "school_id": schoolID,
+                }
+                fileData, _ := json.MarshalIndent(session, "", "  ")
+                _ = os.WriteFile(config.SessionFile(), fileData, 0600)
+                return
+        }
 
-	var session map[string]interface{}
-	if err := json.Unmarshal(data, &session); err != nil {
-		session = make(map[string]interface{})
-	}
-	session["school_id"] = schoolID
-	fileData, _ := json.MarshalIndent(session, "", "  ")
-	_ = os.WriteFile(config.SessionFile(), fileData, 0600)
+        var session map[string]interface{}
+        if err := json.Unmarshal(data, &session); err != nil {
+                session = make(map[string]interface{})
+        }
+        session["school_id"] = schoolID
+        fileData, _ := json.MarshalIndent(session, "", "  ")
+        _ = os.WriteFile(config.SessionFile(), fileData, 0600)
 }
 
 // LoadSessionData loads saved session from disk.
 func (a *App) LoadSessionData() (loginID, password string, remember bool, schoolID int) {
-	data, err := os.ReadFile(config.SessionFile())
-	if err != nil {
-		return "", "", false, 0
-	}
-	var session map[string]interface{}
-	if err := json.Unmarshal(data, &session); err != nil {
-		return "", "", false, 0
-	}
-	loginID, _ = session["login_id"].(string)
-	password, _ = session["password"].(string)
-	remember, _ = session["remember"].(bool)
-	if sid, ok := session["school_id"].(float64); ok {
-		schoolID = int(sid)
-	}
-	return
+        data, err := os.ReadFile(config.SessionFile())
+        if err != nil {
+                return "", "", false, 0
+        }
+        var session map[string]interface{}
+        if err := json.Unmarshal(data, &session); err != nil {
+                return "", "", false, 0
+        }
+        loginID, _ = session["login_id"].(string)
+        password, _ = session["password"].(string)
+        remember, _ = session["remember"].(bool)
+        if sid, ok := session["school_id"].(float64); ok {
+                schoolID = int(sid)
+        }
+        return
 }
 
 // mapStr extracts a string field from a map[string]interface{}.
 func mapStr(m map[string]interface{}, key string) string {
-	if v, ok := m[key].(string); ok {
-		return v
-	}
-	if v, ok := m[key].(float64); ok {
-		return fmt.Sprintf("%.0f", v)
-	}
-	return ""
+        if v, ok := m[key].(string); ok {
+                return v
+        }
+        if v, ok := m[key].(float64); ok {
+                return fmt.Sprintf("%.0f", v)
+        }
+        return ""
+}
+
+// makeHeaderLabel creates a styled section header label.
+func makeHeaderLabel(text string) *widget.Label {
+        return widget.NewLabelWithStyle(text, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+}
+
+// makeInfoCard creates a card with a title and content using consistent styling.
+// Kept for future use.
+func makeInfoCard(title string, content fyne.CanvasObject) *widget.Card {
+        return widget.NewCard(title, "", content)
 }
