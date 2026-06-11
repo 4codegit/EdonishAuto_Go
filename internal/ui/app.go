@@ -79,7 +79,7 @@ func NewApp() *App {
         a.engine.SetCallbacks(a.onProgress, a.onLog)
 
         // Set up the main window
-        a.mainWindow = a.fyneApp.NewWindow(fmt.Sprintf("%s v%s %s", config.AppName, config.AppVersion, config.Signature))
+        a.mainWindow = a.fyneApp.NewWindow(fmt.Sprintf("%s v%s", config.AppName, config.AppVersion))
         a.mainWindow.Resize(fyne.NewSize(1280, 820))
         a.mainWindow.SetMaster()
 
@@ -205,7 +205,7 @@ func (a *App) showDashboard(userInfo *api.UserInfo) {
         // Header layout
         headerLeft := container.NewHBox(
                 widget.NewIcon(theme.ComputerIcon()),
-                widget.NewLabelWithStyle(fmt.Sprintf("%s v%s %s", config.AppName, config.AppVersion, config.Signature), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+                widget.NewLabelWithStyle(fmt.Sprintf("%s v%s", config.AppName, config.AppVersion), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
                 widget.NewSeparator(),
                 container.NewCenter(avatarText),
                 widget.NewLabel(userName),
