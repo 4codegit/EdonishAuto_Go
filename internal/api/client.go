@@ -22,16 +22,6 @@ func (e *AuthenticationError) Error() string {
 	return e.Message
 }
 
-// DateLockedError is returned when trying to modify a grade on a locked date.
-type DateLockedError struct {
-	Message    string
-	StatusCode int
-}
-
-func (e *DateLockedError) Error() string {
-	return e.Message
-}
-
 // School represents a school associated with the user's account.
 type School struct {
 	ID         int
@@ -123,15 +113,6 @@ func (c *Client) doRequest(method, url string, body interface{}) (interface{}, e
 		}
 	}
 
-	// Check for date lock after retry
-	if resp.StatusCode == http.StatusForbidden {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, &DateLockedError{
-			Message:    fmt.Sprintf("Дата заблокирована сервером (403): %s", string(respBody[:min(200, len(respBody))])),
-			StatusCode: resp.StatusCode,
-		}
-	}
-
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
 	}
@@ -215,15 +196,6 @@ func (c *Client) doRequestWithParams(method, url string, params map[string]inter
 		}
 	}
 
-	// Check for date lock after retry
-	if resp.StatusCode == http.StatusForbidden {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, &DateLockedError{
-			Message:    fmt.Sprintf("Дата заблокирована сервером (403): %s", string(respBody[:min(200, len(respBody))])),
-			StatusCode: resp.StatusCode,
-		}
-	}
-
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
 	}
@@ -242,14 +214,6 @@ func (c *Client) doRequestWithParams(method, url string, params map[string]inter
 		return nil, err
 	}
 	return result, nil
-}
-
-// min returns the smaller of two integers.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // Login authenticates with the eDonish API.
@@ -346,6 +310,7 @@ func (c *Client) resolveRoleAndSchool() error {
 		return nil
 	}
 
+	// Collect unique schools from all roles
 	schoolSet := make(map[int]School)
 	var order []int
 
@@ -375,11 +340,13 @@ func (c *Client) resolveRoleAndSchool() error {
 		}
 	}
 
+	// Build ordered school list
 	c.Schools = make([]School, 0, len(schoolSet))
 	for _, id := range order {
 		c.Schools = append(c.Schools, schoolSet[id])
 	}
 
+	// Prefer teacher or classroom-teacher role for the default selection
 	chosen := false
 	for _, school := range c.Schools {
 		if school.Role == "teacher" || school.Role == "classroom-teacher" {
@@ -510,22 +477,14 @@ func (c *Client) GetJournalStudents(groupID, subjectID, quarterPropertyID int) (
 }
 
 // CreateMark creates a mark for a student on a specific date.
-// For ABSENT_MARK (0), mark_type_id is set to 1 (edonish convention).
-// For normal grades, mark_type_id equals the grade value in the 10-point system.
-func (c *Client) CreateMark(studentID int, assignmentDateID string, mark, markTypeID, quarterPropertyID int) (interface{}, error) {
-	effectiveMarkTypeID := markTypeID
-	if mark == config.ABSENT_MARK {
-		effectiveMarkTypeID = config.ABSENT_MarkTypeID
-	} else if markTypeID == 0 || markTypeID == 8 {
-		// In the 10-point system, mark_type_id equals the mark value
-		effectiveMarkTypeID = mark
-	}
+func (c *Client) CreateMark(studentID int, assignmentDateID string, mark, markTypeID, quarterPropertyID int, description string) (interface{}, error) {
 	body := map[string]interface{}{
-		"mark_type_id":              effectiveMarkTypeID,
-		"group_subgroup_student_id": studentID,
-		"schedule_date_id":         assignmentDateID,
-		"quarter_property_id":      quarterPropertyID,
-		"mark":                     mark,
+		"mark_type_id":                  markTypeID,
+		"group_subgroup_student_id":     studentID,
+		"schedule_date_id":              assignmentDateID,
+		"quarter_property_id":           quarterPropertyID,
+		"mark":                          mark,
+		"signature":                     description,
 	}
 	return c.doRequestWithParams("POST", c.url(config.JournalMarkCreate, true), map[string]interface{}{
 		"school_id": c.SchoolID,
@@ -536,20 +495,17 @@ func (c *Client) CreateMark(studentID int, assignmentDateID string, mark, markTy
 // DeleteMark deletes a mark by its ID.
 func (c *Client) DeleteMark(markID string) (interface{}, error) {
 	return c.doRequestWithParams("POST", c.url(config.JournalMarkDelete, true), map[string]interface{}{
-		"mark_id":    markID,
-		"school_id":  c.SchoolID,
+		"mark_id":   markID,
+		"school_id": c.SchoolID,
 	}, nil)
 }
 
 // CreateQuarterMark creates a quarter mark.
-func (c *Client) CreateQuarterMark(studentID, quarterPropertyID, mark, subjectID, curriculumPropertyID int) (interface{}, error) {
+func (c *Client) CreateQuarterMark(studentID, quarterPropertyID, mark int) (interface{}, error) {
 	body := map[string]interface{}{
 		"group_subgroup_student_id": studentID,
 		"quarter_property_id":       quarterPropertyID,
 		"mark":                      mark,
-		"mark_id":                   mark, // For 10-point system, mark_id equals the mark value
-		"subject_id":                subjectID,
-		"curriculum_property_id":    curriculumPropertyID,
 	}
 	return c.doRequestWithParams("POST", c.url(config.JournalQuarterCreate, true), map[string]interface{}{
 		"school_id": c.SchoolID,
@@ -576,35 +532,6 @@ func (c *Client) CreateYearMark(studentID, yearPropertyID, mark int) (interface{
 		"mark":                      mark,
 	}
 	return c.doRequestWithParams("POST", c.url(config.JournalYearCreate, true), map[string]interface{}{
-		"school_id": c.SchoolID,
-	}, body)
-}
-
-// UpdateAssignment updates the topic and/or homework for a lesson date.
-func (c *Client) UpdateAssignment(scheduleDateID, topic, homeWork string) (interface{}, error) {
-	body := map[string]interface{}{
-		"schedule_date_id": scheduleDateID,
-	}
-	if topic != "" {
-		body["topic"] = topic
-	}
-	if homeWork != "" {
-		body["homeWork"] = homeWork
-	}
-	return c.doRequestWithParams("POST", c.url(config.JournalAssignmentUpd, true), map[string]interface{}{
-		"school_id": c.SchoolID,
-	}, body)
-}
-
-// CreateComment creates a comment/signature for a student on a specific date.
-func (c *Client) CreateComment(studentID int, assignmentDateID, comment string, quarterPropertyID int) (interface{}, error) {
-	body := map[string]interface{}{
-		"group_subgroup_student_id": studentID,
-		"schedule_date_id":         assignmentDateID,
-		"quarter_property_id":      quarterPropertyID,
-		"comment":                  comment,
-	}
-	return c.doRequestWithParams("POST", c.url(config.JournalComment, true), map[string]interface{}{
 		"school_id": c.SchoolID,
 	}, body)
 }
