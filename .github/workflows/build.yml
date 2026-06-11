@@ -1,0 +1,80 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-amd64
+            output: edonish-auto
+          - os: ubuntu-latest
+            target: linux-arm64
+            output: edonish-auto-arm64
+          - os: windows-latest
+            target: windows-amd64
+            output: edonish-auto.exe
+          - os: macos-latest
+            target: macos-amd64
+            output: edonish-auto-mac
+          - os: macos-latest
+            target: macos-arm64
+            output: edonish-auto-mac-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libgl1-mesa-dev libxcursor-dev \
+            libxrandr-dev libxinerama-dev libxi-dev libxxf86vm-dev libglu1-mesa-dev
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build
+        env:
+          CGO_ENABLED: 1
+        run: |
+          go build -ldflags "-s -w -X main.version=${{ steps.version.outputs.VERSION }}" -o ${{ matrix.output }} .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edonish-auto-${{ matrix.target }}
+          path: ${{ matrix.output }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
+          generate_release_notes: true
+          draft: false

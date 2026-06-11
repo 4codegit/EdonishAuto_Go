@@ -1,0 +1,326 @@
+// Package ui implements the Fyne-based user interface.
+package ui
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"sync"
+	"time"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
+
+	"github.com/4codegit/edonish-auto/internal/api"
+	"github.com/4codegit/edonish-auto/internal/config"
+	"github.com/4codegit/edonish-auto/internal/engine"
+)
+
+// App is the main application state coordinator.
+type App struct {
+	fyneApp    fyne.App
+	mainWindow fyne.Window
+	apiClient  *api.Client
+	engine     *engine.Engine
+
+	// Data
+	journalOptions  interface{}
+	groupsData      []map[string]interface{}
+	quartersData    []map[string]interface{}
+	teacherSubjects []map[string]interface{}
+
+	// State
+	loggedIn    bool
+	currentPlan *engine.GradePlan
+	loadingData bool
+
+	// UI Components
+	loginPage *LoginPage
+	autoPage  *AutoGradePage
+	journalPg *JournalPage
+	logsPage  *LogsPage
+
+	// Tab container for navigation
+	tabs *container.AppTabs
+
+	// Status bar
+	statusLabel *widget.Label
+
+	// Log buffer
+	logMutex  sync.Mutex
+	logBuffer []string
+
+	// Dark mode state
+	isDarkTheme bool
+}
+
+// NewApp creates a new application instance.
+func NewApp() *App {
+	a := &App{
+		fyneApp:    app.NewWithID("com.edonish.auto"),
+		apiClient:  api.NewClient(),
+		logBuffer:  make([]string, 0),
+	}
+	a.engine = engine.NewEngine(a.apiClient)
+	a.engine.SetCallbacks(a.onProgress, a.onLog)
+
+	// Set up the main window
+	a.mainWindow = a.fyneApp.NewWindow(fmt.Sprintf("%s v%s", config.AppName, config.AppVersion))
+	a.mainWindow.Resize(fyne.NewSize(1280, 820))
+	a.mainWindow.SetMaster()
+
+	// Initialize pages
+	a.logsPage = NewLogsPage(a)
+	a.autoPage = NewAutoGradePage(a)
+	a.journalPg = NewJournalPage(a)
+	a.loginPage = NewLoginPage(a)
+
+	// Show login
+	a.showLogin()
+
+	return a
+}
+
+// Run starts the application event loop.
+func (a *App) Run() {
+	a.mainWindow.ShowAndRun()
+}
+
+// showLogin displays the login screen.
+func (a *App) showLogin() {
+	a.mainWindow.SetContent(a.loginPage.Build())
+	a.mainWindow.Canvas().Focus(a.loginPage.loginEntry)
+	a.loginPage.LoadSession()
+}
+
+// showDashboard displays the main dashboard after login.
+func (a *App) showDashboard(userInfo *api.UserInfo) {
+	a.loggedIn = true
+
+	// Build tab pages
+	a.tabs = container.NewAppTabs(
+		container.NewTabItem("Авто-оценки", a.autoPage.Build()),
+		container.NewTabItem("Журнал", a.journalPg.Build()),
+		container.NewTabItem("Логи", a.logsPage.Build()),
+	)
+
+	// App bar with user info and actions
+	userName := fmt.Sprintf("%s %s", userInfo.LastName, userInfo.FirstName)
+	schoolInfo := fmt.Sprintf("Школа ID: %d | %s", a.apiClient.SchoolID, a.apiClient.Role)
+
+	statusLabel := widget.NewLabel("Готов")
+	a.statusLabel = statusLabel
+
+	// Theme toggle
+	themeBtn := widget.NewButton("Тема", func() {
+		a.isDarkTheme = !a.isDarkTheme
+		if a.isDarkTheme {
+			a.fyneApp.Settings().SetTheme(theme.DarkTheme())
+		} else {
+			a.fyneApp.Settings().SetTheme(theme.DefaultTheme())
+		}
+	})
+
+	// Logout button
+	logoutBtn := widget.NewButton("Выйти", func() {
+		a.onLogout()
+	})
+
+	header := container.NewHBox(
+		widget.NewLabel(fmt.Sprintf("%s v%s", config.AppName, config.AppVersion)),
+		widget.NewSeparator(),
+		widget.NewLabel(userName),
+		widget.NewLabel(schoolInfo),
+		statusLabel,
+		themeBtn,
+		logoutBtn,
+	)
+
+	content := container.NewBorder(header, nil, nil, nil, a.tabs)
+	a.mainWindow.SetContent(content)
+
+	// Load initial data
+	a.LogMessage("Загрузка данных журнала...", "info")
+	go a.loadInitialData()
+}
+
+// loadInitialData loads journal options and populates dropdowns.
+func (a *App) loadInitialData() {
+	a.loadingData = true
+	defer func() { a.loadingData = false }()
+
+	options, err := a.apiClient.GetJournalOptions()
+	if err != nil {
+		a.LogMessage(fmt.Sprintf("Ошибка загрузки: %v", err), "error")
+		return
+	}
+	a.journalOptions = options
+
+	// Parse groups and subjects
+	a.groupsData = nil
+	a.teacherSubjects = nil
+	subjectsSet := make(map[string]map[string]interface{})
+
+	if optionsMap, ok := options.(map[string]interface{}); ok {
+		if groups, ok := optionsMap["groups"].([]interface{}); ok {
+			for _, g := range groups {
+				if gm, ok := g.(map[string]interface{}); ok {
+					groupName := fmt.Sprintf("%s%s", mapStr(gm, "number"), mapStr(gm, "name"))
+					a.groupsData = append(a.groupsData, map[string]interface{}{
+						"id":      gm["id"],
+						"name":    groupName,
+						"number":  gm["number"],
+						"group":   gm["name"],
+						"edit":    gm["edit"],
+						"myClass": gm["myClass"],
+						"subjects": gm["subjects"],
+					})
+					// Extract subjects
+					if subjects, ok := gm["subjects"].([]interface{}); ok {
+						for _, s := range subjects {
+							if sm, ok := s.(map[string]interface{}); ok {
+								key := fmt.Sprintf("%v", sm["subjectId"])
+								if _, exists := subjectsSet[key]; !exists {
+									subjectsSet[key] = map[string]interface{}{
+										"subjectId":   sm["subjectId"],
+										"subjectName": sm["subjectName"],
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	for _, s := range subjectsSet {
+		a.teacherSubjects = append(a.teacherSubjects, s)
+	}
+
+	// Load quarters
+	quarters, err := a.apiClient.GetQuarters()
+	if err != nil {
+		a.LogMessage(fmt.Sprintf("Ошибка загрузки четвертей: %v", err), "error")
+	} else {
+		for _, q := range quarters {
+			if qm, ok := q.(map[string]interface{}); ok {
+				a.quartersData = append(a.quartersData, qm)
+			}
+		}
+	}
+
+	msg := fmt.Sprintf("Загружено: %d классов, %d предметов", len(a.groupsData), len(a.teacherSubjects))
+	a.LogMessage(msg, "info")
+
+	// Update all dropdowns
+	a.autoPage.UpdateDropdowns()
+	a.journalPg.UpdateDropdowns()
+}
+
+// onLogout handles user logout.
+func (a *App) onLogout() {
+	if a.engine.IsRunning() {
+		a.engine.Stop()
+	}
+	a.loggedIn = false
+	a.currentPlan = nil
+	a.apiClient = api.NewClient()
+	a.engine = engine.NewEngine(a.apiClient)
+	a.engine.SetCallbacks(a.onProgress, a.onLog)
+	a.groupsData = nil
+	a.quartersData = nil
+	a.teacherSubjects = nil
+	a.showLogin()
+}
+
+// onProgress handles progress updates from the engine.
+func (a *App) onProgress(plan *engine.GradePlan) {
+	a.autoPage.UpdateProgress(plan)
+}
+
+// onLog handles log messages from the engine.
+func (a *App) onLog(message, level string) {
+	a.LogMessage(message, level)
+}
+
+// LogMessage adds a message to the log buffer and updates the logs page.
+func (a *App) LogMessage(message, level string) {
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	entry := fmt.Sprintf("%s [%s] %s", timestamp, level, message)
+
+	a.logMutex.Lock()
+	a.logBuffer = append(a.logBuffer, entry)
+	a.logMutex.Unlock()
+
+	// Update logs page
+	if a.logsPage != nil {
+		a.logsPage.AppendLog(entry)
+	}
+}
+
+// GetLogText returns all log entries as a single string.
+func (a *App) GetLogText() string {
+	a.logMutex.Lock()
+	defer a.logMutex.Unlock()
+	result := ""
+	for _, line := range a.logBuffer {
+		result += line + "\n"
+	}
+	return result
+}
+
+// ClearLogs clears all log entries.
+func (a *App) ClearLogs() {
+	a.logMutex.Lock()
+	a.logBuffer = make([]string, 0)
+	a.logMutex.Unlock()
+	if a.logsPage != nil {
+		a.logsPage.Clear()
+	}
+}
+
+// SaveSession saves login credentials to disk.
+func (a *App) SaveSession(loginID, password string, remember bool) {
+	data := map[string]interface{}{
+		"login_id": loginID,
+		"password": password,
+		"remember": remember,
+	}
+	if !remember {
+		data["login_id"] = ""
+		data["password"] = ""
+	}
+	fileData, _ := json.MarshalIndent(data, "", "  ")
+	_ = os.WriteFile(config.SessionFile(), fileData, 0600)
+}
+
+// LoadSessionData loads saved session from disk.
+func (a *App) LoadSessionData() (loginID, password string, remember bool) {
+	data, err := os.ReadFile(config.SessionFile())
+	if err != nil {
+		return "", "", false
+	}
+	var session map[string]interface{}
+	if err := json.Unmarshal(data, &session); err != nil {
+		return "", "", false
+	}
+	loginID, _ = session["login_id"].(string)
+	password, _ = session["password"].(string)
+	remember, _ = session["remember"].(bool)
+	return
+}
+
+// mapStr extracts a string field from a map[string]interface{}.
+func mapStr(m map[string]interface{}, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	if v, ok := m[key].(float64); ok {
+		return fmt.Sprintf("%.0f", v)
+	}
+	return ""
+}
