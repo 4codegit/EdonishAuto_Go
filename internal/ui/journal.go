@@ -592,6 +592,7 @@ func (p *JournalPage) saveGrade() {
 			val,
 			8, // mark_type_id
 			info.qpropID,
+			config.Signature,
 		)
 
 		fyne.Do(func() {
