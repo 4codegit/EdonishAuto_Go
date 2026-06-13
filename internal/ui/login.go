@@ -1,5 +1,6 @@
 // LoginPage — страница входа в систему.
 // Содержит поля для логина/пароля, чекбокс «Запомнить» и кнопку входа.
+// После успешного входа показывает выбор школы/роли.
 // Поддерживает автозаполнение из сохранённой сессии.
 package ui
 
@@ -16,13 +17,17 @@ import (
 
 // LoginPage — страница авторизации
 type LoginPage struct {
-	app        *App            // Ссылка на главное приложение
-	container  *fyne.Container // Корневой контейнер страницы
-	loginEntry *widget.Entry   // Поле логина
-	passEntry  *widget.Entry   // Поле пароля
-	remember   *widget.Check   // Чекбокс «Запомнить»
-	loginBtn   *widget.Button  // Кнопка «Войти»
-	schoolSel  *widget.Select  // Выбор школы (появляется после логина)
+	app         *App            // Ссылка на главное приложение
+	container   *fyne.Container // Корневой контейнер страницы
+	loginEntry  *widget.Entry   // Поле логина
+	passEntry   *widget.Entry   // Поле пароля
+	remember    *widget.Check   // Чекбокс «Запомнить»
+	loginBtn    *widget.Button  // Кнопка «Войти»
+	schoolSel   *widget.Select  // Выбор школы (появляется после логина)
+	schoolLabel *canvas.Text    // Заголовок «Выберите школу»
+	schoolBox   *fyne.Container // Контейнер с выбором школы (скрыт до входа)
+	formBox     *fyne.Container // Контейнер с формой входа
+	loggedIn    bool            // Флаг: авторизация пройдена
 }
 
 // NewLoginPage создаёт страницу входа с автозаполнением из сессии
@@ -54,9 +59,9 @@ func NewLoginPage(app *App) *LoginPage {
 	lp.loginBtn = widget.NewButton("Войти", lp.onLogin)
 	lp.loginBtn.Importance = widget.HighImportance
 
-	// Выбор школы (скрыт до успешной авторизации)
-	lp.schoolSel = widget.NewSelect([]string{}, lp.onSchoolSelected)
-	lp.schoolSel.PlaceHolder = "Выберите школу..."
+	// Enter на пароле нажимает кнопку входа
+	lp.passEntry.OnSubmitted = func(string) { lp.loginBtn.OnTapped() }
+	lp.loginEntry.OnSubmitted = func(string) { lp.passEntry.FocusGained() }
 
 	// Автозаполнение из сохранённой сессии
 	if lp.app.session != nil {
@@ -67,27 +72,42 @@ func NewLoginPage(app *App) *LoginPage {
 		}
 	}
 
-	// Форма входа
-	form := container.NewVBox(
-		layout.NewSpacer(),
-		container.NewHBox(layout.NewSpacer(), titleText, layout.NewSpacer()),
-		container.NewHBox(layout.NewSpacer(), subtitleText, layout.NewSpacer()),
-		widget.NewSeparator(),
+	// Форма входа (видна до авторизации)
+	lp.formBox = container.NewVBox(
 		widget.NewForm(
 			&widget.FormItem{Text: "Логин", Widget: lp.loginEntry},
 			&widget.FormItem{Text: "Пароль", Widget: lp.passEntry},
 		),
 		lp.remember,
 		lp.loginBtn,
-		lp.schoolSel,
-		layout.NewSpacer(),
 	)
 
-	// Центрируем форму
+	// Выбор школы (скрыт до успешной авторизации)
+	lp.schoolLabel = canvas.NewText("Выберите школу/роль:", nil)
+	lp.schoolLabel.TextStyle = fyne.TextStyle{Bold: true}
+	lp.schoolLabel.TextSize = 16
+	lp.schoolLabel.Hide()
+
+	lp.schoolSel = widget.NewSelect([]string{}, lp.onSchoolSelected)
+	lp.schoolSel.PlaceHolder = "Выберите школу..."
+	lp.schoolSel.Hide()
+
+	lp.schoolBox = container.NewVBox(
+		lp.schoolLabel,
+		lp.schoolSel,
+	)
+	lp.schoolBox.Hide()
+
+	// Собираем страницу
 	lp.container = container.NewPadded(
 		container.NewCenter(
 			container.NewVBox(
-				container.NewHBox(layout.NewSpacer(), form, layout.NewSpacer()),
+				container.NewHBox(layout.NewSpacer(), titleText, layout.NewSpacer()),
+				container.NewHBox(layout.NewSpacer(), subtitleText, layout.NewSpacer()),
+				widget.NewSeparator(),
+				lp.formBox,
+				lp.schoolBox,
+				layout.NewSpacer(),
 			),
 		),
 	)
@@ -100,13 +120,13 @@ func (lp *LoginPage) GetLoginEntry() *widget.Entry {
 	return lp.loginEntry
 }
 
-// Container возвращает корневой контейнер страницы (реализация fyne.CanvasObject)
+// Container возвращает корневой контейнер страницы
 func (lp *LoginPage) Container() fyne.CanvasObject {
 	return lp.container
 }
 
 // onLogin обрабатывает нажатие кнопки «Войти»
-// Выполняет авторизацию и загружает список школ
+// Выполняет авторизацию и показывает выбор школы
 func (lp *LoginPage) onLogin() {
 	login := lp.loginEntry.Text
 	password := lp.passEntry.Text
@@ -136,12 +156,19 @@ func (lp *LoginPage) onLogin() {
 				return
 			}
 
-			// Загружаем информацию о школах/ролях
+			// Авторизация успешна — загружаем школы
 			err = lp.app.client.FetchHeaderInfo()
 			if err != nil {
 				dialog.ShowError(err, lp.app.GetWindow())
 				return
 			}
+
+			// Скрываем форму входа, показываем выбор школы
+			lp.loggedIn = true
+			lp.loginBtn.Hide()
+			lp.loginEntry.Disable()
+			lp.passEntry.Disable()
+			lp.remember.Hide()
 
 			// Показываем выбор школы
 			schoolNames := make([]string, len(lp.app.client.Schools))
@@ -150,6 +177,10 @@ func (lp *LoginPage) onLogin() {
 			}
 			lp.schoolSel.Options = schoolNames
 			lp.schoolSel.Refresh()
+
+			lp.schoolLabel.Show()
+			lp.schoolSel.Show()
+			lp.schoolBox.Show()
 
 			// Если школа одна — выбираем автоматически
 			if len(lp.app.client.Schools) == 1 {
