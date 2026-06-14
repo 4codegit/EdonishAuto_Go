@@ -24,3 +24,36 @@ Stage Summary:
 - "Заполнить выбранного" fills only that student's empty cells
 - "Заполнить всех" fills all students (original behavior)
 - Go compiler not available in this environment; syntax verified manually
+
+---
+Task ID: 7
+Agent: sub-agent
+Task: Dashboard header+tabs integration - rewrite dashboard.go
+
+Work Log:
+- Read existing dashboard.go (774 lines) completely to understand full structure
+- Read controller.go, client/client.go, ui/controller_ext.go for interface/API context
+- Added 3 new struct fields to Dashboard: topicsTab (*TopicsTab), diariesTab (*DiariesTab), finalGradesTab (*FinalGradesTab)
+- Modified buildUI() to:
+  - Initialize new tabs: NewTopicsTab, NewDiariesTab, NewFinalGradesTab
+  - Add 3 new tab items: "📖 Темы", "📓 Дневник", "🏆 Итоговые"
+  - Renamed existing tabs: "📋 Оценки" → "📋 Журнал", "📝 Домашнее задание" → "📝 ДЗ"
+  - Kept "📅 Расписание" unchanged
+- Redesigned buildHeader() with prominent navbar:
+  - Added app title "eDonish Auto v4.2" on the left with white bold text
+  - Dark blue background rectangle (NRGBA 30,58,95) using canvas.NewRectangle
+  - Stack overlay layout for background + content
+  - User info and buttons on the right with white/light text
+  - Minimum height of 52px for the navbar bar
+- Modified loadData() to also call Refresh() on new tabs after data loads:
+  - d.topicsTab.Refresh(d.dates, d.selectedGroup, d.selectedSubject)
+  - d.diariesTab.Refresh(d.students, d.selectedGroup, d.selectedSubject, d.selectedQuarter)
+  - d.finalGradesTab.Refresh(d.students, d.selectedGroup, d.selectedSubject, d.selectedQuarter)
+- Preserved ALL existing methods: buildFilters, loadJournalOptions, onClassSelected, onSubjectSelected, onQuarterSelected, checkFilterCompletion, rebuildGradesTab, calculateAverage, findMark, onGradeCellTapped, setGrade, deleteGrade, getGradeColor, rebuildScheduleTab, showEditTopicDialog, updateAssignmentTopic, rebuildHomeworkTab, showEditHomeworkDialog, updateAssignmentHomework
+- Border layout maintained: header+filters fixed at top, status at bottom, tabs fill remaining space
+
+Stage Summary:
+- dashboard.go rewritten as drop-in replacement with 6 tabs (3 existing + 3 new)
+- Header now has prominent dark blue navbar with app title
+- All existing functionality preserved identically
+- New tab types (TopicsTab, DiariesTab, FinalGradesTab) referenced but their files created by other tasks

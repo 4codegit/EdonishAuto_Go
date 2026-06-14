@@ -65,3 +65,7 @@ go.work
 # Fyne cache
 .fyne/
 tool-results/
+
+# Local build sysroot
+.sysroot/
+.libs/
