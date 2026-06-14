@@ -5,7 +5,6 @@ import (
         "time"
 
         "fyne.io/fyne/v2"
-        "fyne.io/fyne/v2/canvas"
         "fyne.io/fyne/v2/container"
         "fyne.io/fyne/v2/dialog"
         "fyne.io/fyne/v2/theme"
@@ -340,12 +339,11 @@ func (t *TopicsTab) rebuildTopicsList() {
                         return len(dates)
                 },
                 func() fyne.CanvasObject {
-                        dateText := canvas.NewText("", theme.ForegroundColor())
-                        dateText.TextStyle = fyne.TextStyle{Bold: true}
-                        dateText.TextSize = 13
+                        dateLabel := widget.NewLabel("")
+                        dateLabel.TextStyle = fyne.TextStyle{Bold: true}
 
-                        dayText := canvas.NewText("", theme.DisabledColor())
-                        dayText.TextSize = 11
+                        dayLabel := widget.NewLabel("")
+                        dayLabel.TextStyle = fyne.TextStyle{Italic: true}
 
                         topicLabel := widget.NewLabel("")
                         topicLabel.Wrapping = fyne.TextWrapWord
@@ -354,7 +352,7 @@ func (t *TopicsTab) rebuildTopicsList() {
                         hwLabel.Wrapping = fyne.TextWrapWord
                         hwLabel.TextStyle = fyne.TextStyle{Italic: true}
 
-                        left := container.NewVBox(dateText, dayText)
+                        left := container.NewVBox(dateLabel, dayLabel)
                         right := container.NewVBox(topicLabel, hwLabel)
                         row := container.NewBorder(nil, nil, left, nil, right)
                         return container.NewPadded(row)
@@ -370,13 +368,13 @@ func (t *TopicsTab) rebuildTopicsList() {
                         left := border.Objects[0].(*fyne.Container)
                         right := border.Objects[1].(*fyne.Container)
 
-                        dateText := left.Objects[0].(*canvas.Text)
-                        dayText := left.Objects[1].(*canvas.Text)
+                        dateLabel := left.Objects[0].(*widget.Label)
+                        dayLabel := left.Objects[1].(*widget.Label)
                         topicLabel := right.Objects[0].(*widget.Label)
                         hwLabel := right.Objects[1].(*widget.Label)
 
-                        dateText.Text = day.AssignmentDate
-                        dayText.Text = day.WeekdayName
+                        dateLabel.SetText(day.AssignmentDate)
+                        dayLabel.SetText(day.WeekdayName)
 
                         if day.Topic != "" {
                                 topicLabel.SetText(day.Topic)
@@ -393,8 +391,8 @@ func (t *TopicsTab) rebuildTopicsList() {
                                 hwLabel.SetText("")
                         }
 
-                        dateText.Refresh()
-                        dayText.Refresh()
+                        dateLabel.Refresh()
+                        dayLabel.Refresh()
                         topicLabel.Refresh()
                         hwLabel.Refresh()
                 },

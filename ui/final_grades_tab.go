@@ -6,7 +6,6 @@ import (
         "strconv"
 
         "fyne.io/fyne/v2"
-        "fyne.io/fyne/v2/canvas"
         "fyne.io/fyne/v2/container"
         "fyne.io/fyne/v2/dialog"
         "fyne.io/fyne/v2/theme"
@@ -247,34 +246,34 @@ func (t *FinalGradesTab) rebuildGradesTable() {
                         return rowCount, totalCols
                 },
                 func() fyne.CanvasObject {
-                        txt := canvas.NewText("—", theme.ForegroundColor())
-                        txt.TextSize = 13
-                        txt.Alignment = fyne.TextAlignCenter
-                        return container.NewMax(txt)
+                        lbl := widget.NewLabel("")
+                        lbl.TextStyle = fyne.TextStyle{}
+                        lbl.Alignment = fyne.TextAlignCenter
+                        lbl.Wrapping = fyne.TextWrapOff
+                        return container.NewMax(lbl)
                 },
                 func(id widget.TableCellID, cell fyne.CanvasObject) {
                         c := cell.(*fyne.Container)
-                        txt := c.Objects[0].(*canvas.Text)
-                        txt.TextStyle = fyne.TextStyle{}
-                        txt.Color = theme.ForegroundColor()
-                        txt.Text = "—"
-                        txt.Alignment = fyne.TextAlignCenter
+                        lbl := c.Objects[0].(*widget.Label)
+                        lbl.TextStyle = fyne.TextStyle{}
+                        lbl.SetText("—")
+                        lbl.Alignment = fyne.TextAlignCenter
 
                         // Header row
                         if id.Row == 0 {
-                                txt.TextStyle = fyne.TextStyle{Bold: true}
+                                lbl.TextStyle = fyne.TextStyle{Bold: true}
                                 switch id.Col {
                                 case colNumber:
-                                        txt.Text = "№"
+                                        lbl.SetText("№")
                                 case colName:
-                                        txt.Text = "ФИО ученика"
-                                        txt.Alignment = fyne.TextAlignLeading
+                                        lbl.SetText("ФИО ученика")
+                                        lbl.Alignment = fyne.TextAlignLeading
                                 case colAvg:
-                                        txt.Text = "Средний балл"
+                                        lbl.SetText("Средний балл")
                                 default:
                                         qIdx := id.Col - colQ1
                                         if qIdx >= 0 && qIdx < len(quarterHeaders) {
-                                                txt.Text = quarterHeaders[qIdx]
+                                                lbl.SetText(quarterHeaders[qIdx])
                                         }
                                 }
                                 return
@@ -289,21 +288,19 @@ func (t *FinalGradesTab) rebuildGradesTable() {
 
                         switch id.Col {
                         case colNumber:
-                                txt.Text = strconv.Itoa(studIdx + 1)
+                                lbl.SetText(strconv.Itoa(studIdx + 1))
                         case colName:
-                                txt.Text = fmt.Sprintf("%s %s", student.LastName, student.FirstName)
-                                txt.Alignment = fyne.TextAlignLeading
+                                lbl.SetText(fmt.Sprintf("%s %s", student.LastName, student.FirstName))
+                                lbl.Alignment = fyne.TextAlignLeading
                         case colAvg:
                                 if student.AverageScore != "" {
-                                        txt.Text = student.AverageScore
-                                        val, err := strconv.ParseFloat(student.AverageScore, 64)
+                                        lbl.SetText(student.AverageScore)
+                                        _, err := strconv.ParseFloat(student.AverageScore, 64)
                                         if err == nil {
-                                                txt.Color = getGradeColor(int(val + 0.5))
-                                                txt.TextStyle = fyne.TextStyle{Bold: true}
+                                                lbl.TextStyle = fyne.TextStyle{Bold: true}
                                         }
                                 } else {
-                                        txt.Text = "—"
-                                        txt.Color = theme.DisabledColor()
+                                        lbl.SetText("—")
                                 }
                         default:
                                 // Quarter mark columns
@@ -311,14 +308,9 @@ func (t *FinalGradesTab) rebuildGradesTable() {
                                 if qIdx >= 0 && qIdx < len(student.QuarterMarks) {
                                         qm := student.QuarterMarks[qIdx]
                                         if qm.ShortName != "" && qm.ShortName != "—" {
-                                                txt.Text = qm.ShortName
-                                                val, err := strconv.Atoi(qm.ShortName)
-                                                if err == nil {
-                                                        txt.Color = getGradeColor(val)
-                                                }
+                                                lbl.SetText(qm.ShortName)
                                         } else {
-                                                txt.Text = "—"
-                                                txt.Color = theme.DisabledColor()
+                                                lbl.SetText("—")
                                         }
                                 }
                         }

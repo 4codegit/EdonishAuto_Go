@@ -3,7 +3,6 @@ package ui
 import (
         "fmt"
         "image/color"
-        "math"
         "strconv"
         "strings"
 
@@ -506,38 +505,38 @@ func (d *Dashboard) rebuildGradesTab() {
                         return rowCount, colCount
                 },
                 func() fyne.CanvasObject {
-                        txt := canvas.NewText("—", theme.ForegroundColor())
-                        txt.TextSize = 13
-                        txt.Alignment = fyne.TextAlignCenter
-                        return container.NewMax(txt)
+                        lbl := widget.NewLabel("")
+                        lbl.TextStyle = fyne.TextStyle{}
+                        lbl.Alignment = fyne.TextAlignCenter
+                        lbl.Wrapping = fyne.TextWrapOff
+                        return container.NewMax(lbl)
                 },
                 func(id widget.TableCellID, cell fyne.CanvasObject) {
                         cellContainer := cell.(*fyne.Container)
-                        txt := cellContainer.Objects[0].(*canvas.Text)
-                        txt.TextStyle = fyne.TextStyle{}
-                        txt.Color = theme.ForegroundColor()
-                        txt.Text = "—"
+                        lbl := cellContainer.Objects[0].(*widget.Label)
+                        lbl.TextStyle = fyne.TextStyle{}
+                        lbl.SetText("—")
 
                         // Table Header Row
                         if id.Row == 0 {
-                                txt.TextStyle = fyne.TextStyle{Bold: true}
+                                lbl.TextStyle = fyne.TextStyle{Bold: true}
                                 if id.Col == 0 {
-                                        txt.Text = "Ученик"
-                                        txt.Alignment = fyne.TextAlignLeading
+                                        lbl.SetText("Ученик")
+                                        lbl.Alignment = fyne.TextAlignLeading
                                 } else if id.Col == colCount-1 {
-                                        txt.Text = "Средняя"
-                                        txt.Alignment = fyne.TextAlignCenter
+                                        lbl.SetText("Средняя")
+                                        lbl.Alignment = fyne.TextAlignCenter
                                 } else {
                                         dateIdx := id.Col - 1
                                         if dateIdx >= 0 && dateIdx < len(d.dates) {
                                                 fullDate := d.dates[dateIdx].AssignmentDate
                                                 if len(fullDate) >= 10 {
-                                                        txt.Text = fullDate[5:10] // MM-DD
+                                                        lbl.SetText(fullDate[5:10]) // MM-DD
                                                 } else {
-                                                        txt.Text = fullDate
+                                                        lbl.SetText(fullDate)
                                                 }
                                         }
-                                        txt.Alignment = fyne.TextAlignCenter
+                                        lbl.Alignment = fyne.TextAlignCenter
                                 }
                                 return
                         }
@@ -550,20 +549,18 @@ func (d *Dashboard) rebuildGradesTab() {
                         student := d.students[studIdx]
 
                         if id.Col == 0 {
-                                txt.Text = fmt.Sprintf("%s %s", student.LastName, student.FirstName)
-                                txt.Alignment = fyne.TextAlignLeading
+                                lbl.SetText(fmt.Sprintf("%s %s", student.LastName, student.FirstName))
+                                lbl.Alignment = fyne.TextAlignLeading
                         } else if id.Col == colCount-1 {
                                 // Calculate Average
                                 avg := d.calculateAverage(student)
                                 if avg > 0 {
-                                        txt.Text = fmt.Sprintf("%.1f", avg)
-                                        txt.Color = getGradeColor(int(math.Round(avg)))
-                                        txt.TextStyle = fyne.TextStyle{Bold: true}
+                                        lbl.SetText(fmt.Sprintf("%.1f", avg))
+                                        lbl.TextStyle = fyne.TextStyle{Bold: true}
                                 } else {
-                                        txt.Text = "—"
-                                        txt.Color = theme.DisabledColor()
+                                        lbl.SetText("—")
                                 }
-                                txt.Alignment = fyne.TextAlignCenter
+                                lbl.Alignment = fyne.TextAlignCenter
                         } else {
                                 // Mark cells
                                 dateIdx := id.Col - 1
@@ -571,21 +568,13 @@ func (d *Dashboard) rebuildGradesTab() {
                                         dateID := d.dates[dateIdx].AssignmentDateID
                                         mark := d.findMark(student, dateID)
                                         if mark != nil {
-                                                txt.Text = mark.ShortName
-                                                if mark.ShortName == "ғ/у" || mark.ShortName == "Н/А" {
-                                                        txt.Color = color.NRGBA{R: 219, G: 38, B: 38, A: 255} // Red for absent
-                                                } else {
-                                                        val, err := strconv.Atoi(mark.ShortName)
-                                                        if err == nil {
-                                                                txt.Color = getGradeColor(val)
-                                                        }
-                                                }
+                                                lbl.SetText(mark.ShortName)
+                                                // Color not supported on widget.Label; using theme default
                                         } else {
-                                                txt.Text = "—"
-                                                txt.Color = theme.DisabledColor()
+                                                lbl.SetText("—")
                                         }
                                 }
-                                txt.Alignment = fyne.TextAlignCenter
+                                lbl.Alignment = fyne.TextAlignCenter
                         }
                 },
         )
@@ -761,10 +750,9 @@ func (d *Dashboard) rebuildScheduleTab() {
                 },
                 func() fyne.CanvasObject {
                         // Title, Day of week, Topic Description
-                        dateText := canvas.NewText("00.00.0000", theme.ForegroundColor())
+                        dateText := widget.NewLabel("")
                         dateText.TextStyle = fyne.TextStyle{Bold: true}
-                        dayText := canvas.NewText("Понедельник", theme.DisabledColor())
-                        dayText.TextSize = 11
+                        dayText := widget.NewLabel("")
 
                         topicLabel := widget.NewLabel("Тема урока...")
                         topicLabel.Wrapping = fyne.TextWrapWord
@@ -782,11 +770,11 @@ func (d *Dashboard) rebuildScheduleTab() {
                         left := border.Objects[0].(*fyne.Container)
                         topicLabel := border.Objects[1].(*widget.Label)
 
-                        dateText := left.Objects[0].(*canvas.Text)
-                        dayText := left.Objects[1].(*canvas.Text)
+                        dateText := left.Objects[0].(*widget.Label)
+                        dayText := left.Objects[1].(*widget.Label)
 
-                        dateText.Text = day.AssignmentDate
-                        dayText.Text = day.WeekdayName
+                        dateText.SetText(day.AssignmentDate)
+                        dayText.SetText(day.WeekdayName)
 
                         if day.Topic != "" {
                                 topicLabel.SetText(day.Topic)
@@ -795,9 +783,6 @@ func (d *Dashboard) rebuildScheduleTab() {
                                 topicLabel.SetText("Нажмите для ввода темы урока...")
                                 topicLabel.TextStyle = fyne.TextStyle{Italic: true}
                         }
-
-                        dateText.Refresh()
-                        dayText.Refresh()
                         topicLabel.Refresh()
                 },
         )
@@ -870,7 +855,7 @@ func (d *Dashboard) rebuildHomeworkTab() {
                         return len(d.dates)
                 },
                 func() fyne.CanvasObject {
-                        dateText := canvas.NewText("00.00.0000", theme.ForegroundColor())
+                        dateText := widget.NewLabel("")
                         dateText.TextStyle = fyne.TextStyle{Bold: true}
 
                         hwLabel := widget.NewLabel("Домашнее задание...")
@@ -884,10 +869,10 @@ func (d *Dashboard) rebuildHomeworkTab() {
 
                         pad := cell.(*fyne.Container)
                         border := pad.Objects[0].(*fyne.Container)
-                        dateText := border.Objects[0].(*canvas.Text)
+                        dateText := border.Objects[0].(*widget.Label)
                         hwLabel := border.Objects[1].(*widget.Label)
 
-                        dateText.Text = day.AssignmentDate
+                        dateText.SetText(day.AssignmentDate)
                         if day.HomeWork != "" {
                                 hwLabel.SetText(day.HomeWork)
                                 hwLabel.TextStyle = fyne.TextStyle{}
@@ -895,8 +880,6 @@ func (d *Dashboard) rebuildHomeworkTab() {
                                 hwLabel.SetText("Нажмите для ввода домашнего задания...")
                                 hwLabel.TextStyle = fyne.TextStyle{Italic: true}
                         }
-
-                        dateText.Refresh()
                         hwLabel.Refresh()
                 },
         )

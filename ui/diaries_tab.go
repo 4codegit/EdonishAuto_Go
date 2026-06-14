@@ -2,7 +2,6 @@ package ui
 
 import (
         "fmt"
-        "image/color"
 
         "fyne.io/fyne/v2"
         "fyne.io/fyne/v2/canvas"
@@ -199,27 +198,21 @@ func (dt *DiariesTab) rebuildDiariesList() {
                 },
                 func() fyne.CanvasObject {
                         // Group & Subject
-                        groupText := canvas.NewText("Класс", theme.ForegroundColor())
+                        groupText := widget.NewLabel("")
                         groupText.TextStyle = fyne.TextStyle{Bold: true}
-                        groupText.TextSize = 14
 
-                        subjectText := canvas.NewText("Предмет", theme.DisabledColor())
-                        subjectText.TextSize = 12
+                        subjectText := widget.NewLabel("")
 
-                        quarterText := canvas.NewText("Четверть", theme.DisabledColor())
-                        quarterText.TextSize = 11
+                        quarterText := widget.NewLabel("")
 
                         // Diligence mark
-                        diligenceText := canvas.NewText("—", theme.DisabledColor())
+                        diligenceText := widget.NewLabel("")
                         diligenceText.TextStyle = fyne.TextStyle{Bold: true}
-                        diligenceText.TextSize = 13
 
                         // Signature statuses
-                        parentText := canvas.NewText("✗ Не подписано", color.NRGBA{R: 220, G: 38, B: 38, A: 255})
-                        parentText.TextSize = 11
+                        parentText := widget.NewLabel("")
 
-                        managerText := canvas.NewText("✗ Не подписано", color.NRGBA{R: 220, G: 38, B: 38, A: 255})
-                        managerText.TextSize = 11
+                        managerText := widget.NewLabel("")
 
                         // Layout: left side (group, subject, quarter), center (diligence), right (signatures)
                         leftBox := container.NewVBox(groupText, subjectText, quarterText)
@@ -242,53 +235,40 @@ func (dt *DiariesTab) rebuildDiariesList() {
                         centerBox := border.Objects[1].(*fyne.Container)
                         rightBox := border.Objects[2].(*fyne.Container)
 
-                        groupText := leftBox.Objects[0].(*canvas.Text)
-                        subjectText := leftBox.Objects[1].(*canvas.Text)
-                        quarterText := leftBox.Objects[2].(*canvas.Text)
+                        groupText := leftBox.Objects[0].(*widget.Label)
+                        subjectText := leftBox.Objects[1].(*widget.Label)
+                        quarterText := leftBox.Objects[2].(*widget.Label)
 
-                        diligenceText := centerBox.Objects[0].(*canvas.Text)
+                        diligenceText := centerBox.Objects[0].(*widget.Label)
 
-                        parentText := rightBox.Objects[0].(*canvas.Text)
-                        managerText := rightBox.Objects[1].(*canvas.Text)
+                        parentText := rightBox.Objects[0].(*widget.Label)
+                        managerText := rightBox.Objects[1].(*widget.Label)
 
                         // Group & Subject
-                        groupText.Text = entry.GroupName
-                        subjectText.Text = entry.SubjectName
-                        quarterText.Text = entry.QuarterName
+                        groupText.SetText(entry.GroupName)
+                        subjectText.SetText(entry.SubjectName)
+                        quarterText.SetText(entry.QuarterName)
 
-                        // Diligence mark with color coding
+                        // Diligence mark
                         if entry.DiligenceMark != "" {
-                                diligenceText.Text = fmt.Sprintf("Прилежание: %s", entry.DiligenceMark)
-                                diligenceText.Color = getDiligenceColor(entry.DiligenceMark)
+                                diligenceText.SetText(fmt.Sprintf("Прилежание: %s", entry.DiligenceMark))
                         } else {
-                                diligenceText.Text = "Прилежание: не указано"
-                                diligenceText.Color = theme.DisabledColor()
+                                diligenceText.SetText("Прилежание: не указано")
                         }
 
                         // Parent signature status
                         if entry.ParentSigned {
-                                parentText.Text = "✓ Подписано"
-                                parentText.Color = color.NRGBA{R: 22, G: 163, B: 74, A: 255}
+                                parentText.SetText("✓ Подписано")
                         } else {
-                                parentText.Text = "✗ Не подписано"
-                                parentText.Color = color.NRGBA{R: 220, G: 38, B: 38, A: 255}
+                                parentText.SetText("✗ Не подписано")
                         }
 
                         // Manager signature status
                         if entry.ManagerSigned {
-                                managerText.Text = "✓ Подписано"
-                                managerText.Color = color.NRGBA{R: 22, G: 163, B: 74, A: 255}
+                                managerText.SetText("✓ Подписано")
                         } else {
-                                managerText.Text = "✗ Не подписано"
-                                managerText.Color = color.NRGBA{R: 220, G: 38, B: 38, A: 255}
+                                managerText.SetText("✗ Не подписано")
                         }
-
-                        groupText.Refresh()
-                        subjectText.Refresh()
-                        quarterText.Refresh()
-                        diligenceText.Refresh()
-                        parentText.Refresh()
-                        managerText.Refresh()
                 },
         )
 
