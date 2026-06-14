@@ -1,5 +1,8 @@
 name: Build and Release
 
+env:
+  MESA_VERSION: 26.1.1
+
 on:
   push:
     branches:
@@ -70,11 +73,32 @@ jobs:
           go build -ldflags "-s -w -X main.version=${{ steps.version.outputs.VERSION }}" -o ${{ matrix.output }} .
         shell: bash
 
+      - name: Bundle Windows portable package with Mesa OpenGL
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mesaArchive = "mesa3d-$env:MESA_VERSION-release-msvc.7z"
+          curl.exe -L --retry 3 --output $mesaArchive --url "https://github.com/pal1000/mesa-dist-win/releases/download/$env:MESA_VERSION/$mesaArchive"
+          & 'C:\Program Files\7-Zip\7z.exe' x $mesaArchive -omesa
+
+          New-Item -ItemType Directory -Force -Path windows-portable | Out-Null
+          Copy-Item ${{ matrix.output }} windows-portable\
+          Copy-Item mesa\x64\opengl32.dll, mesa\x64\libglapi.dll, mesa\x64\libgallium_wgl.dll windows-portable\
+          Compress-Archive -Path windows-portable\* -DestinationPath edonish-auto-windows-portable.zip -Force
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: edonish-auto-${{ matrix.target }}
           path: ${{ matrix.output }}
+
+      - name: Upload Windows portable artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: edonish-auto-windows-portable
+          path: edonish-auto-windows-portable.zip
 
   package-deb:
     runs-on: ubuntu-latest
