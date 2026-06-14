@@ -53,7 +53,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           else
-            VERSION=$(grep 'AppVersion' internal/config/config.go | awk -F'"' '{print $2}')
+            VERSION=$(grep 'Version = ' FyneApp.toml | awk -F'"' '{print $2}')
             echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           fi
           echo "Building version: ${{ steps.version.outputs.VERSION }}"
