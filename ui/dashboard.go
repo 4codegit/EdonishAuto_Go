@@ -24,6 +24,7 @@ type Dashboard struct {
 
         // Navigation state
         homePage     *fyne.Container
+        contentStack *fyne.Container // stack that holds the current page (only last visible)
         currentPage  fyne.CanvasObject
         navStack     []fyne.CanvasObject
 
@@ -87,6 +88,9 @@ func (d *Dashboard) buildUI() {
         d.homePage = d.buildHomePage()
         d.currentPage = d.homePage
 
+        // Content stack holds the current page; swapping Objects[0] navigates
+        d.contentStack = container.NewStack(d.homePage)
+
         // Fixed header + filters at top, status at bottom, content fills remaining space
         topSection := container.NewVBox(header, filters, widget.NewSeparator())
 
@@ -95,7 +99,7 @@ func (d *Dashboard) buildUI() {
                 d.statusLabel,
                 nil,
                 nil,
-                d.homePage,
+                d.contentStack,
         )
 }
 
@@ -260,8 +264,8 @@ func (d *Dashboard) buildHomePage() *fyne.Container {
 func (d *Dashboard) navigateTo(page fyne.CanvasObject) {
         d.navStack = append(d.navStack, d.currentPage)
         d.currentPage = page
-        d.container.Objects[0].(*fyne.Container).Objects[2] = page // center of Border
-        d.container.Refresh()
+        d.contentStack.Objects = []fyne.CanvasObject{page}
+        d.contentStack.Refresh()
 }
 
 // navigateBack returns to the previous page on the navigation stack.
@@ -272,8 +276,8 @@ func (d *Dashboard) navigateBack() {
         prev := d.navStack[len(d.navStack)-1]
         d.navStack = d.navStack[:len(d.navStack)-1]
         d.currentPage = prev
-        d.container.Objects[0].(*fyne.Container).Objects[2] = prev // center of Border
-        d.container.Refresh()
+        d.contentStack.Objects = []fyne.CanvasObject{prev}
+        d.contentStack.Refresh()
 }
 
 // makeSubPage wraps content with a back button header.
