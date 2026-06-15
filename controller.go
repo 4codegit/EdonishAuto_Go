@@ -1,159 +1,61 @@
 package main
 
 import (
-        "encoding/json"
-        "os"
-        "path/filepath"
+	"github.com/4codegit/edonish-auto/client"
+	"github.com/4codegit/edonish-auto/ui"
 
-        "fyne.io/fyne/v2"
-        "fyne.io/fyne/v2/app"
-        "fyne.io/fyne/v2/theme"
-
-        "github.com/4codegit/edonish-auto/client"
-        "github.com/4codegit/edonish-auto/ui"
+	"fyne.io/fyne/v2"
 )
 
-type SessionData struct {
-        LoginID  string `json:"login_id"`
-        Password string `json:"password"`
-        SchoolID int    `json:"school_id"`
-        Remember bool   `json:"remember"`
-}
-
+// AppController manages the application lifecycle.
 type AppController struct {
-        fyneApp    fyne.App
-        mainWindow fyne.Window
-        apiClient  *client.EdonishClient
-        isDark     bool
-        session    *SessionData
+	app       fyne.App
+	window    fyne.Window
+	client    *client.EdonishClient
+	login     *ui.LoginForm
+	dashboard *ui.Dashboard
 }
 
-func NewAppController() *AppController {
-        ac := &AppController{
-                fyneApp:   app.NewWithID("tj.edonish.auto"),
-                apiClient: client.NewEdonishClient(),
-                isDark:    true,
-        }
-
-        ac.mainWindow = ac.fyneApp.NewWindow("eDonish Auto")
-        ac.mainWindow.Resize(fyne.NewSize(1200, 800))
-        ac.mainWindow.SetFixedSize(false)
-        ac.mainWindow.CenterOnScreen()
-
-        ac.applyTheme()
-        ac.loadSession()
-
-        return ac
+// NewAppController creates a new application controller.
+func NewAppController(a fyne.App) *AppController {
+	return &AppController{
+		app:    a,
+		window: a.NewWindow("eDonish Auto"),
+	}
 }
 
-func (ac *AppController) Run() {
-        ac.ShowLogin()
-        ac.mainWindow.ShowAndRun()
+// Run starts the application.
+func (c *AppController) Run() {
+	c.client = client.NewEdonishClient()
+
+	c.login = ui.NewLoginForm(c)
+	c.window.SetContent(c.login.Container())
+	c.window.Resize(fyne.NewSize(900, 650))
+	c.window.Canvas().Focus(c.login.GetLoginEntry())
+	c.window.ShowAndRun()
 }
 
-func (ac *AppController) ShowLogin() {
-        loginScreen := ui.NewLoginScreen(ac)
-        ac.mainWindow.SetContent(loginScreen.Container())
-        ac.mainWindow.Canvas().Focus(loginScreen.GetLoginEntry())
+// GetClient implements ui.Controller.
+func (c *AppController) GetClient() *client.EdonishClient {
+	return c.client
 }
 
-func (ac *AppController) ShowDashboard() {
-        dashboard := ui.NewDashboard(ac)
-        ac.mainWindow.SetContent(dashboard.Container())
+// GetWindow implements ui.Controller.
+func (c *AppController) GetWindow() fyne.Window {
+	return c.window
 }
 
-// Controller interface implementation
-
-func (ac *AppController) Login(username, password string) error {
-        err := ac.apiClient.Login(username, password)
-        if err != nil {
-                return err
-        }
-        return ac.apiClient.FetchHeaderInfo()
+// Logout implements ui.Controller.
+func (c *AppController) Logout() {
+	c.client = client.NewEdonishClient()
+	c.login = ui.NewLoginForm(c)
+	c.window.SetContent(c.login.Container())
+	c.window.Canvas().Focus(c.login.GetLoginEntry())
 }
 
-func (ac *AppController) GetClient() *client.EdonishClient {
-        return ac.apiClient
-}
-
-func (ac *AppController) SelectSchool(schoolID int) error {
-        return ac.apiClient.SelectSchool(schoolID)
-}
-
-func (ac *AppController) GetWindow() fyne.Window {
-        return ac.mainWindow
-}
-
-func (ac *AppController) Logout() {
-        ac.apiClient = client.NewEdonishClient()
-        ac.ShowLogin()
-}
-
-func (ac *AppController) ToggleTheme() {
-        ac.isDark = !ac.isDark
-        ac.applyTheme()
-}
-
-func (ac *AppController) applyTheme() {
-        if ac.isDark {
-                ac.fyneApp.Settings().SetTheme(theme.DarkTheme())
-        } else {
-                ac.fyneApp.Settings().SetTheme(theme.LightTheme())
-        }
-}
-
-// Session management
-
-func sessionFilePath() string {
-        home, err := os.UserHomeDir()
-        if err != nil {
-                return ""
-        }
-        return filepath.Join(home, ".edonish_session.json")
-}
-
-func (ac *AppController) loadSession() {
-        path := sessionFilePath()
-        if path == "" {
-                return
-        }
-
-        data, err := os.ReadFile(path)
-        if err != nil {
-                return
-        }
-
-        var sd SessionData
-        if err := json.Unmarshal(data, &sd); err == nil {
-                ac.session = &sd
-        }
-}
-
-func (ac *AppController) SaveSession(login, password string, schoolID int, remember bool) {
-        sd := SessionData{
-                LoginID:  login,
-                SchoolID: schoolID,
-                Remember: remember,
-        }
-
-        if remember {
-                sd.Password = password
-        }
-
-        path := sessionFilePath()
-        if path == "" {
-                return
-        }
-
-        data, err := json.Marshal(sd)
-        if err == nil {
-                _ = os.WriteFile(path, data, 0600)
-        }
-}
-
-func (ac *AppController) GetSavedSession() (string, string, bool) {
-        if ac.session != nil {
-                return ac.session.LoginID, ac.session.Password, ac.session.Remember
-        }
-        return "", "", false
+// ShowDashboard switches from login screen to the main dashboard.
+func (c *AppController) ShowDashboard() {
+	c.dashboard = ui.NewDashboard(c)
+	c.window.SetContent(c.dashboard.Container())
+	c.window.Resize(fyne.NewSize(1200, 750))
 }

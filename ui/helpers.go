@@ -1,335 +1,349 @@
+// Package ui provides helper utilities, color schemes, and custom widgets
+// for the eDonish Auto application.
 package ui
 
 import (
-	"fmt"
-	"image/color"
-	"strconv"
-	"time"
+        "fmt"
+        "math"
+        "math/rand"
+        "strings"
+        "time"
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/theme"
-	"fyne.io/fyne/v2/widget"
+        "fyne.io/fyne/v2"
+        "fyne.io/fyne/v2/canvas"
+        "fyne.io/fyne/v2/container"
+        "fyne.io/fyne/v2/theme"
+        "fyne.io/fyne/v2/widget"
 )
 
-// ------------------------------------------
-// GRADE COMBOS — for random fill
-// ------------------------------------------
+// ─── Diligence / Behavior Constants ────────────────────────────────────────
 
-// Diligence marks — these match the edonish.tj API enum values.
-var DiligenceMarks = []string{"Отличный", "Хорошо", "Удовлетворительный", "Неудовлетворительно"}
-
-// GradeCombo defines a named range for random grade generation.
-type GradeCombo struct {
-	Name   string
-	MinVal int
-	MaxVal int
+// DiligenceMarks maps diligence mark keys to display labels.
+var DiligenceMarks = map[string]string{
+        "5":  "Примерное",
+        "4":  "Хорошее",
+        "3":  "Удовлетворительное",
+        "2":  "Неудовлетворительное",
 }
 
-var GradeCombos = []GradeCombo{
-	{Name: "Хорошо и Отлично", MinVal: 7, MaxVal: 10},
-	{Name: "Хорошо и Плохо", MinVal: 4, MaxVal: 8},
-	{Name: "Удовлетворительно и Плохо", MinVal: 3, MaxVal: 6},
-	{Name: "Отлично только", MinVal: 9, MaxVal: 10},
-	{Name: "Хорошо только", MinVal: 7, MaxVal: 8},
+// GradeCombos defines preset grade combinations for random fill.
+var GradeCombos = []struct {
+        Name  string
+        Min   int
+        Max   int
+}{
+        {"Отлично (9-10)", 9, 10},
+        {"Хорошо-Отлично (8-10)", 8, 10},
+        {"Хорошо (7-9)", 7, 9},
+        {"Средне-Хорошо (6-8)", 6, 8},
+        {"Средне (5-7)", 5, 7},
+        {"Произвольно (2-10)", 2, 10},
 }
 
-// WeightPeriods defines period options for fill operations.
-var WeightPeriods = []string{"Полугодие 1", "Полугодие 2", "Весь год", "До текущей даты"}
-
-// ------------------------------------------
-// GRADE CALCULATION UTILITIES
-// ------------------------------------------
-
-// AverageToGrade converts a floating-point average score to a 10-point grade.
-// Uses standard rounding thresholds.
-func AverageToGrade(avg float64) int {
-	switch {
-	case avg >= 9.5:
-		return 10
-	case avg >= 8.5:
-		return 9
-	case avg >= 7.5:
-		return 8
-	case avg >= 6.5:
-		return 7
-	case avg >= 5.5:
-		return 6
-	case avg >= 4.5:
-		return 5
-	case avg >= 3.5:
-		return 4
-	case avg >= 2.5:
-		return 3
-	default:
-		return 2
-	}
+// WeightPeriods maps period names to API weight identifiers.
+var WeightPeriods = map[string]string{
+        "Четверть": "quarter",
+        "Семестр":  "semester",
+        "Год":      "year",
 }
 
-// ClassAverageToCategory determines the sign category and comment based on class average.
-// Returns (diligence, comment).
-func ClassAverageToCategory(avg float64) (string, string) {
-	switch {
-	case avg >= 8.5:
-		return "Отличный", "Хорошо и отлично"
-	case avg >= 6.5:
-		return "Хорошо", "Хорошо и удовлетворительно"
-	default:
-		return "Удовлетворительный", "Плохо и удовлетворительно"
-	}
-}
+// ─── Grade / Average Helpers ───────────────────────────────────────────────
 
-// ParseAverageScore safely parses average score string to float64.
-func ParseAverageScore(s string) float64 {
-	if s == "" || s == "0.0" || s == "—" {
-		return 0
-	}
-	v, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0
-	}
-	return v
-}
-
-// CalcClassAverage computes the average of all student average scores.
-func CalcClassAverage(students []AvgScorer) float64 {
-	if len(students) == 0 {
-		return 0
-	}
-	var total float64
-	var count int
-	for _, s := range students {
-		avg := s.GetAverageScore()
-		if avg > 0 {
-			total += avg
-			count++
-		}
-	}
-	if count == 0 {
-		return 0
-	}
-	return total / float64(count)
-}
-
-// AvgScorer interface for objects that have an average score.
+// AvgScorer is an interface for objects that can report an average score.
 type AvgScorer interface {
-	GetAverageScore() float64
+        AverageScore() float64
 }
 
-// ------------------------------------------
-// BEHAVIOR COMMENT TEMPLATES
-// ------------------------------------------
-
-// BehaviorCategory defines the type of behavior note.
-type BehaviorCategory string
-
-const (
-	BehaviorPraise    BehaviorCategory = "Похвала"
-	BehaviorComplaint BehaviorCategory = "Жалоба"
-	BehaviorMixed     BehaviorCategory = "Смешанный"
-	BehaviorNeutral   BehaviorCategory = "Нейтральный"
-)
-
-// BehaviorCategories is the list of all categories for UI selectors.
-var BehaviorCategories = []string{
-	string(BehaviorPraise),
-	string(BehaviorComplaint),
-	string(BehaviorMixed),
-	string(BehaviorNeutral),
+// AverageToGrade converts a numeric average to a 5-point grade.
+func AverageToGrade(avg float64) int {
+        switch {
+        case avg >= 8.5:
+                return 5
+        case avg >= 6.5:
+                return 4
+        case avg >= 4.5:
+                return 3
+        default:
+                return 2
+        }
 }
 
-// BehaviorTemplates maps a category to a pool of ready-made teacher comments.
-var BehaviorTemplates = map[BehaviorCategory][]string{
-	BehaviorPraise: {
-		"Учится отлично, молодец! Так держать!",
-		"Активно работает на уроках, показывает высокие результаты.",
-		"Внимателен и старателен, домашние задания выполняет на отлично.",
-		"Показывает глубокие знания предмета, активно участвует в обсуждениях.",
-		"Очень старательный ученик, всегда готов к урокам.",
-		"Проявляет большой интерес к предмету, задаёт правильные вопросы.",
-		"Отличная успеваемость, пример для других учеников.",
-		"Внимательно слушает объяснения, быстро усваивает материал.",
-	},
-	BehaviorComplaint: {
-		"Не выполняет домашние задания, необходимо усилить контроль.",
-		"Нарушает дисциплину на уроках, отвлекает других учеников.",
-		"Невнимателен на уроках, часто отвлекается.",
-		"Пропускает занятия без уважительной причины.",
-		"Не готов к урокам, необходимо больше заниматься дома.",
-		"Не участвует в работе на уроке, пассивен.",
-		"Систематически не выполняет задания, нужна помощь родителей.",
-		"Слабая подготовка к урокам, необходимо дополнительное занятие.",
-	},
-	BehaviorMixed: {
-		"Способный ученик, но недостаточно старается на уроках.",
-		"Может учиться лучше, но часто отвлекается и не доделывает задания.",
-		"Хорошие знания, но нестабильная успеваемость — нужно больше усилий.",
-		"Старается, но результаты пока не соответствуют способностям.",
-		"Показывает хорошие результаты, но иногда ленится.",
-		"Активен на уроках, но домашние задания выполняет нерегулярно.",
-		"Понимает материал, но не всегда применяет знания на практике.",
-		"Есть прогресс, но необходимо больше самостоятельной работы.",
-	},
-	BehaviorNeutral: {
-		"Уроки посещает регулярно, ведёт тетрадь.",
-		"Задания выполняет в среднем объёме.",
-		"Работает на уроках на среднем уровне.",
-		"Присутствует на занятиях, участие в работе среднее.",
-		"Домашние задания выполняет, но без особого старания.",
-		"Материал усваивает на базовом уровне.",
-	},
+// ClassAverageToCategory returns a category label for a class average.
+func ClassAverageToCategory(avg float64) string {
+        switch {
+        case avg >= 9.0:
+                return "Отлично"
+        case avg >= 7.0:
+                return "Хорошо"
+        case avg >= 5.0:
+                return "Удовлетворительно"
+        default:
+                return "Неудовлетворительно"
+        }
 }
 
-// BehaviorToDiligence maps a behavior category to the corresponding diligence mark.
-var BehaviorToDiligence = map[BehaviorCategory]string{
-	BehaviorPraise:    "Отличный",
-	BehaviorComplaint: "Неудовлетворительно",
-	BehaviorMixed:     "Удовлетворительный",
-	BehaviorNeutral:   "Хорошо",
+// ParseAverageScore parses a string like "8.50" into a float64.
+func ParseAverageScore(s string) float64 {
+        var v float64
+        fmt.Sscanf(strings.TrimSpace(s), "%f", &v)
+        return v
 }
 
-// DiligenceToBehaviorComment returns a default behavior comment for a given diligence mark.
+// CalcClassAverage computes the overall class average from student scores.
+func CalcClassAverage(scores []float64) float64 {
+        if len(scores) == 0 {
+                return 0
+        }
+        sum := 0.0
+        for _, s := range scores {
+                sum += s
+        }
+        return math.Round(sum/float64(len(scores))*100) / 100
+}
+
+// ─── Behavior / Diligence Helpers ──────────────────────────────────────────
+
+// BehaviorCategory represents a behavior assessment category.
+type BehaviorCategory struct {
+        Key   string
+        Label string
+        Color string
+}
+
+// BehaviorCategories lists the behavior assessment options.
+var BehaviorCategories = []BehaviorCategory{
+        {"5", "Примерное", "#22c55e"},
+        {"4", "Хорошее", "#3b82f6"},
+        {"3", "Удовлетворительное", "#f59e0b"},
+        {"2", "Неудовлетворительное", "#ef4444"},
+}
+
+// BehaviorTemplates maps behavior keys to comment templates.
+var BehaviorTemplates = map[string][]string{
+        "5": {
+                "Примерное поведение и дисциплина.",
+                "Отличная дисциплина и активное участие.",
+                "Ведёт себя примерным образом.",
+        },
+        "4": {
+                "Хорошее поведение, старается.",
+                "Дисциплинированный, активный на уроках.",
+                "Хорошее отношение к учёбе.",
+        },
+        "3": {
+                "Удовлетворительное поведение, есть замечания.",
+                "Нуждается в усилении дисциплины.",
+                "Не всегда внимателен на уроках.",
+        },
+        "2": {
+                "Неудовлетворительное поведение.",
+                "Частые нарушения дисциплины.",
+                "Не соблюдает правила поведения.",
+        },
+}
+
+// BehaviorToDiligence maps behavior key to diligence key.
+var BehaviorToDiligence = map[string]string{
+        "5": "5",
+        "4": "4",
+        "3": "3",
+        "2": "2",
+}
+
+// DiligenceToBehaviorComment maps diligence key to a comment.
 var DiligenceToBehaviorComment = map[string]string{
-	"Отличный":            "Превосходная успеваемость и поведение. Молодец!",
-	"Хорошо":              "Хорошо учится и ведёт себя на уроках.",
-	"Удовлетворительный":  "Удовлетворительная успеваемость, есть над чем работать.",
-	"Неудовлетворительно": "Неудовлетворительная успеваемость, требуется внимание родителей.",
+        "5": "Примерное поведение, активное участие в жизни класса.",
+        "4": "Хорошее поведение, добросовестное отношение к учёбе.",
+        "3": "Удовлетворительное поведение, требует внимания.",
+        "2": "Неудовлетворительное поведение, частые нарушения.",
 }
 
-// ------------------------------------------
-// SIGN COMMENT TEMPLATES (for final grades tab)
-// ------------------------------------------
+// ─── Sign Comment Helpers ──────────────────────────────────────────────────
 
-// SignCommentTemplates maps category to comments for auto-signing.
-var SignCommentTemplates = map[string][]string{
-	"Хорошо и отлично": {
-		"Высокая успеваемость класса. Рекомендуется продолжать в том же духе.",
-		"Отличные результаты по итогам периода. Класс показывает стабильные знания.",
-		"Успеваемость класса на высоком уровне. Большинство учеников справляются отлично.",
-	},
-	"Хорошо и удовлетворительно": {
-		"Успеваемость класса на среднем уровне. Есть потенциал для роста.",
-		"Результаты неоднородные, часть учеников показывает хорошие знания.",
-		"Средний уровень успеваемости. Требуется дополнительная работа с отстающими.",
-	},
-	"Плохо и удовлетворительно": {
-		"Низкая успеваемость класса. Необходимы дополнительные занятия.",
-		"Многие ученики не справляются с программой. Требуется внимание родителей.",
-		"Успеваемость ниже среднего. Рекомендуется индивидуальная работа.",
-	},
+// SignCommentTemplates provides templates for diary sign comments.
+var SignCommentTemplates = []string{
+        "Ознакомлен(а).",
+        "Ознакомлен(а) с оценками.",
+        "Проверено.",
+        "С оценками ознакомлен(а).",
+        "Подтверждено.",
 }
 
-// RandomSignComment picks a random sign comment for a category.
-func RandomSignComment(category string) string {
-	templates, ok := SignCommentTemplates[category]
-	if !ok || len(templates) == 0 {
-		return "Подпись классного руководителя"
-	}
-	return templates[time.Now().Nanosecond()%len(templates)]
+// RandomSignComment returns a random sign comment.
+func RandomSignComment() string {
+        r := rand.New(rand.NewSource(time.Now().UnixNano()))
+        return SignCommentTemplates[r.Intn(len(SignCommentTemplates))]
 }
 
-// ------------------------------------------
-// COLOR HELPERS
-// ------------------------------------------
+// ─── Color Helpers ─────────────────────────────────────────────────────────
 
-// getDiligenceColor returns color for diligence mark.
-func getDiligenceColor(mark string) color.Color {
-	switch mark {
-	case "Отличный":
-		return color.NRGBA{R: 22, G: 163, B: 74, A: 255}
-	case "Хорошо":
-		return color.NRGBA{R: 37, G: 99, B: 235, A: 255}
-	case "Удовлетворительный":
-		return color.NRGBA{R: 217, G: 119, B: 6, A: 255}
-	case "Неудовлетворительно":
-		return color.NRGBA{R: 220, G: 38, B: 38, A: 255}
-	default:
-		return theme.DisabledColor()
-	}
+// Modern dark-accent color palette (primary definitions in dashboard.go)
+
+// getDiligenceColor returns a color name for a diligence mark.
+func getDiligenceColor(key string) string {
+        switch key {
+        case "5":
+                return "#22c55e"
+        case "4":
+                return "#3b82f6"
+        case "3":
+                return "#f59e0b"
+        case "2":
+                return "#ef4444"
+        default:
+                return "#6b7280"
+        }
 }
 
-// getBehaviorColor returns color for a behavior category.
-func getBehaviorColor(cat BehaviorCategory) color.Color {
-	switch cat {
-	case BehaviorPraise:
-		return color.NRGBA{R: 22, G: 163, B: 74, A: 255}
-	case BehaviorComplaint:
-		return color.NRGBA{R: 220, G: 38, B: 38, A: 255}
-	case BehaviorMixed:
-		return color.NRGBA{R: 217, G: 119, B: 6, A: 255}
-	case BehaviorNeutral:
-		return color.NRGBA{R: 37, G: 99, B: 235, A: 255}
-	default:
-		return theme.DisabledColor()
-	}
+// getBehaviorColor returns a color name for a behavior key.
+func getBehaviorColor(key string) string {
+        switch key {
+        case "5":
+                return "#22c55e"
+        case "4":
+                return "#3b82f6"
+        case "3":
+                return "#f59e0b"
+        case "2":
+                return "#ef4444"
+        default:
+                return "#6b7280"
+        }
 }
 
-// GradeColor returns a color for a numeric grade.
-func GradeColor(grade int) color.Color {
-	switch {
-	case grade >= 9:
-		return color.NRGBA{R: 22, G: 163, B: 74, A: 255}  // Green
-	case grade >= 7:
-		return color.NRGBA{R: 37, G: 99, B: 235, A: 255}   // Blue
-	case grade >= 5:
-		return color.NRGBA{R: 217, G: 119, B: 6, A: 255}   // Orange
-	default:
-		return color.NRGBA{R: 220, G: 38, B: 38, A: 255}   // Red
-	}
+// GradeColor returns a color string for a grade value.
+func GradeColor(grade int) string {
+        switch {
+        case grade >= 9:
+                return "#22c55e" // green
+        case grade >= 7:
+                return "#3b82f6" // blue
+        case grade >= 5:
+                return "#f59e0b" // yellow
+        case grade >= 3:
+                return "#f97316" // orange
+        default:
+                return "#ef4444" // red
+        }
 }
 
-// ------------------------------------------
-// UI HELPERS
-// ------------------------------------------
+// ─── UI Helpers ────────────────────────────────────────────────────────────
 
-// MakeFixedHeader creates a fixed header bar.
-func MakeFixedHeader(content fyne.CanvasObject) *fyne.Container {
-	bg := canvas.NewRectangle(color.NRGBA{R: 245, G: 245, B: 245, A: 255})
-	return container.NewStack(bg, container.NewPadded(content))
+// MakeFixedHeader creates a non-scrolling header bar with the given content.
+func MakeFixedHeader(title string, objects ...fyne.CanvasObject) *fyne.Container {
+        titleText := canvas.NewText(title, theme.Color(theme.ColorNameForeground))
+        titleText.TextStyle = fyne.TextStyle{Bold: true}
+        titleText.TextSize = 16
+
+        items := []fyne.CanvasObject{titleText}
+        items = append(items, objects...)
+        return container.NewHBox(items...)
 }
 
-// FormatSignedStatus returns colored text for signed status.
-func FormatSignedStatus(signed bool) (string, color.Color) {
-	if signed {
-		return "Подписано", color.NRGBA{R: 22, G: 163, B: 74, A: 255}
-	}
-	return "Не подписано", color.NRGBA{R: 220, G: 38, B: 38, A: 255}
+// FormatSignedStatus returns a formatted string for signed/unsigned status.
+func FormatSignedStatus(signed bool) string {
+        if signed {
+                return "✓ Подписано"
+        }
+        return "✗ Не подписано"
 }
 
-// FormatStudentName returns "LastName FirstName M." format.
-func FormatStudentName(last, first, middle string) string {
-	name := fmt.Sprintf("%s %s", last, first)
-	if middle != "" {
-		name += " " + string([]rune(middle)[:1]) + "."
-	}
-	return name
+// FormatStudentName formats a student's full name.
+func FormatStudentName(lastName, firstName string) string {
+        return lastName + " " + firstName
 }
 
-// ------------------------------------------
-// TAPPABLE OVERLAY (clickable transparent area)
-// ------------------------------------------
+// ─── tapOverlay Widget ─────────────────────────────────────────────────────
 
-// tapOverlay is a transparent widget that handles tap events.
+// tapOverlay is a transparent widget that captures taps and can pass them
+// through to underlying widgets. Useful for dismissing popups.
 type tapOverlay struct {
-	widget.BaseWidget
-	onTap func()
+        widget.BaseWidget
+        onTapped func()
 }
 
-func newTapOverlay(onTap func()) *tapOverlay {
-	t := &tapOverlay{onTap: onTap}
-	t.ExtendBaseWidget(t)
-	return t
+// NewTapOverlay creates a new tap overlay widget.
+func NewTapOverlay(onTapped func()) *tapOverlay {
+        t := &tapOverlay{onTapped: onTapped}
+        t.ExtendBaseWidget(t)
+        return t
 }
 
+// CreateRenderer implements fyne.Widget.
 func (t *tapOverlay) CreateRenderer() fyne.WidgetRenderer {
-	return widget.NewSimpleRenderer(canvas.NewRectangle(color.NRGBA{R: 0, G: 0, B: 0, A: 0}))
+        return widget.NewSimpleRenderer(canvas.NewRectangle(colorSurface))
 }
 
-func (t *tapOverlay) Tapped(*fyne.PointEvent) {
-	if t.onTap != nil {
-		t.onTap()
-	}
+// Tapped implements fyne.Tappable.
+func (t *tapOverlay) Tapped(_ *fyne.PointEvent) {
+        if t.onTapped != nil {
+                t.onTapped()
+        }
 }
 
-func (t *tapOverlay) TappedSecondary(*fyne.PointEvent) {}
+// ─── KeyboardScrollTable Widget ────────────────────────────────────────────
+
+// KeyboardScrollTable wraps a widget.Table inside a scroll container and
+// implements fyne.Focusable to handle keyboard navigation.
+type KeyboardScrollTable struct {
+        widget.BaseWidget
+        scroll   *container.Scroll
+        table    *widget.Table
+        onKeyDown func(*fyne.KeyEvent)
+        onRune   func(rune)
+        focused  bool
+}
+
+// NewKeyboardScrollTable creates a new KeyboardScrollTable wrapping the given table.
+func NewKeyboardScrollTable(tbl *widget.Table) *KeyboardScrollTable {
+        k := &KeyboardScrollTable{
+                table: tbl,
+                scroll: container.NewScroll(tbl),
+        }
+        k.ExtendBaseWidget(k)
+        return k
+}
+
+// CreateRenderer implements fyne.Widget.
+func (k *KeyboardScrollTable) CreateRenderer() fyne.WidgetRenderer {
+        return widget.NewSimpleRenderer(k.scroll)
+}
+
+// FocusGained implements fyne.Focusable.
+func (k *KeyboardScrollTable) FocusGained() {
+        k.focused = true
+}
+
+// FocusLost implements fyne.Focusable.
+func (k *KeyboardScrollTable) FocusLost() {
+        k.focused = false
+}
+
+// TypedKey implements fyne.Focusable.
+func (k *KeyboardScrollTable) TypedKey(e *fyne.KeyEvent) {
+        if k.onKeyDown != nil {
+                k.onKeyDown(e)
+        }
+}
+
+// TypedRune implements fyne.Focusable.
+func (k *KeyboardScrollTable) TypedRune(r rune) {
+        if k.onRune != nil {
+                k.onRune(r)
+        }
+}
+
+// Table returns the wrapped widget.Table.
+func (k *KeyboardScrollTable) Table() *widget.Table {
+        return k.table
+}
+
+// Scroll returns the scroll container.
+func (k *KeyboardScrollTable) Scroll() *container.Scroll {
+        return k.scroll
+}
+
+// Focused returns whether the widget currently has focus.
+func (k *KeyboardScrollTable) Focused() bool {
+        return k.focused
+}

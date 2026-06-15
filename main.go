@@ -1,23 +1,27 @@
+// eDonish Auto — Modern desktop application (Go + Fyne UI)
+// Automated grade management for edonish.tj
 package main
 
 import (
-        "os"
-        "runtime"
+	"os"
+	"runtime"
+
+	"fyne.io/fyne/v2/app"
 )
 
+// main - точка входа в приложение
 func main() {
-        // Force software rendering to avoid OpenGL driver crashes
-        // Works across Windows, Linux, and older macOS
-        if os.Getenv("FYNE_RENDER") == "" {
-                os.Setenv("FYNE_RENDER", "software")
-        }
-        if runtime.GOOS == "windows" && os.Getenv("GALLIUM_DRIVER") == "" {
-                os.Setenv("GALLIUM_DRIVER", "llvmpipe")
-        }
-        if runtime.GOOS == "windows" && os.Getenv("LIBGL_ALWAYS_SOFTWARE") == "" {
-                os.Setenv("LIBGL_ALWAYS_SOFTWARE", "1")
-        }
+	// On Windows, force software rendering to avoid OpenGL driver crashes.
+	if runtime.GOOS == "windows" && os.Getenv("FYNE_RENDER") == "" {
+		os.Setenv("FYNE_RENDER", "software")
+	}
 
-        controller := NewAppController()
-        controller.Run()
+	// Создаём приложение Fyne
+	a := app.New()
+
+	// Создаём контроллер приложения
+	ctrl := NewAppController(a)
+
+	// Запускаем приложение
+	ctrl.Run()
 }

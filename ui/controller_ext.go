@@ -1,8 +1,6 @@
 package ui
 
-// ExtendedController extends Controller with additional navigation methods.
-// The AppController in controller.go will implement these.
+// ExtendedController is an optional extension of the Controller interface.
 type ExtendedController interface {
 	Controller
-	// No additional methods needed - tabs are managed by Dashboard itself
 }
