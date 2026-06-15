@@ -64,6 +64,7 @@ type Dashboard struct {
 
         // Journal selection state
         selectedCell *widget.TableCellID
+        deleteBtn    *widget.Button
 
         // Tab objects
         topicsTab      *TopicsTab
@@ -189,12 +190,19 @@ func (d *Dashboard) buildFilters() *fyne.Container {
         })
         d.refreshBtn.Disable()
 
+        d.deleteBtn = widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+                d.deleteSelectedCell()
+        })
+        d.deleteBtn.Importance = widget.DangerImportance
+        d.deleteBtn.Disable()
+
         return container.NewHBox(
                 widget.NewLabel("Фильтры:"),
                 d.classSel,
                 d.subjectSel,
                 d.quarterSel,
                 d.refreshBtn,
+                d.deleteBtn,
         )
 }
 
@@ -556,6 +564,13 @@ func (d *Dashboard) rebuildGradesTable() {
                 // Track selected cell
                 d.selectedCell = &id
 
+                // Enable delete button if a grade cell is selected
+                if id.Row > 0 && id.Col >= 2 && id.Col < totalCols-1 {
+                        d.deleteBtn.Enable()
+                } else {
+                        d.deleteBtn.Disable()
+                }
+
                 // Detect double-click
                 if id == lastCellID {
                         clickCount++
@@ -631,8 +646,35 @@ func (d *Dashboard) installKeyboardHandler() {
                 case fyne.KeyRight:
                         d.navigateCell(1, 0)
                 case fyne.KeyDelete:
-                        d.navigateCell(0, 1) // Delete → move down like Tab
+                        d.deleteSelectedCell()
                 }
+        })
+
+        // Handle number keys 2-9 to type a grade directly into the selected cell
+        c.SetOnTypedRune(func(r rune) {
+                if d.gradesTable == nil || d.currentPage != d.gradesContainer || d.selectedCell == nil {
+                        return
+                }
+                if r < '2' || r > '9' {
+                        return
+                }
+                id := *d.selectedCell
+                numDateCols := len(d.dates)
+                totalCols := 2 + numDateCols + 1
+
+                // Only grade cells (date columns)
+                if id.Row <= 0 || id.Col < 2 || id.Col >= totalCols-1 {
+                        return
+                }
+
+                studentIdx := id.Row - 1
+                dateIdx := id.Col - 2
+                if studentIdx >= len(d.students) || dateIdx >= len(d.dates) {
+                        return
+                }
+
+                grade := int(r - '0')
+                d.showQuickGradePopup(studentIdx, dateIdx, grade)
         })
 }
 
@@ -652,6 +694,7 @@ func (d *Dashboard) navigateCell(dCol, dRow int) {
                 start := widget.TableCellID{Row: 1, Col: 2}
                 d.selectedCell = &start
                 d.gradesTable.Select(start)
+                d.deleteBtn.Enable()
                 return
         }
 
@@ -675,6 +718,147 @@ func (d *Dashboard) navigateCell(dCol, dRow int) {
         newID := widget.TableCellID{Row: newRow, Col: newCol}
         d.selectedCell = &newID
         d.gradesTable.Select(newID)
+
+        // Enable/disable delete button based on whether it's a grade cell
+        if newRow > 0 && newCol >= 2 && newCol < totalCols-1 {
+                d.deleteBtn.Enable()
+        } else {
+                d.deleteBtn.Disable()
+        }
+}
+
+// ------------------------------------------
+// DELETE SELECTED CELL
+// ------------------------------------------
+
+func (d *Dashboard) deleteSelectedCell() {
+        if d.selectedCell == nil || d.students == nil || d.dates == nil {
+                return
+        }
+
+        id := *d.selectedCell
+        numDateCols := len(d.dates)
+        totalCols := 2 + numDateCols + 1
+
+        // Only grade cells (date columns)
+        if id.Row <= 0 || id.Col < 2 || id.Col >= totalCols-1 {
+                return
+        }
+
+        studentIdx := id.Row - 1
+        dateIdx := id.Col - 2
+
+        if studentIdx >= len(d.students) || dateIdx >= len(d.dates) {
+                return
+        }
+
+        student := d.students[studentIdx]
+        date := d.dates[dateIdx]
+
+        // Find the mark ID for this cell
+        var markID string
+        var currentGrade string
+        for _, sm := range student.SubjectMarks {
+                if sm.AssignmentDateID == date.AssignmentDateID {
+                        if sm.AssignmentMarkID != "" {
+                                markID = sm.AssignmentMarkID
+                                currentGrade = sm.ShortName
+                        }
+                        break
+                }
+        }
+
+        if markID == "" {
+                d.statusLabel.SetText("Ячейка пуста — нечего удалять")
+                return
+        }
+
+        confirmMsg := fmt.Sprintf("Удалить оценку %s для %s %s — %s?",
+                currentGrade, student.LastName, student.FirstName,
+                date.AssignmentDate[5:])
+
+        dialog.ShowConfirm("Удалить оценку", confirmMsg, func(ok bool) {
+                if !ok {
+                        return
+                }
+                go func() {
+                        err := d.controller.GetClient().DeleteMark(markID)
+                        fyne.Do(func() {
+                                if err != nil {
+                                        dialog.ShowError(fmt.Errorf("Ошибка удаления: %v", err), d.controller.GetWindow())
+                                } else {
+                                        d.statusLabel.SetText(fmt.Sprintf("Оценка удалена: %s %s — %s",
+                                                student.LastName, student.FirstName, date.AssignmentDate[5:]))
+                                        d.updateStudentLocal(studentIdx, dateIdx, 0)
+                                }
+                        })
+                }()
+        }, d.controller.GetWindow())
+}
+
+// ------------------------------------------
+// ASYNC AVERAGE RECALCULATION
+// ------------------------------------------
+
+// updateStudentLocal optimistically updates the local student data after a grade
+// change, recalculates the average score, refreshes the table, and then reloads
+// fresh data from the server in the background.
+func (d *Dashboard) updateStudentLocal(studentIdx, dateIdx, newGrade int) {
+        if studentIdx >= len(d.students) || dateIdx >= len(d.dates) {
+                go d.loadData()
+                return
+        }
+
+        student := &d.students[studentIdx]
+        dateID := d.dates[dateIdx].AssignmentDateID
+
+        if newGrade == 0 {
+                // Remove mark locally
+                for i, sm := range student.SubjectMarks {
+                        if sm.AssignmentDateID == dateID {
+                                student.SubjectMarks = append(student.SubjectMarks[:i], student.SubjectMarks[i+1:]...)
+                                break
+                        }
+                }
+        } else {
+                // Add or update mark locally
+                found := false
+                for i, sm := range student.SubjectMarks {
+                        if sm.AssignmentDateID == dateID {
+                                student.SubjectMarks[i].ShortName = strconv.Itoa(newGrade)
+                                found = true
+                                break
+                        }
+                }
+                if !found {
+                        student.SubjectMarks = append(student.SubjectMarks, client.SubjectMark{
+                                AssignmentDateID: dateID,
+                                ShortName:        strconv.Itoa(newGrade),
+                        })
+                }
+        }
+
+        // Recalculate average from local marks
+        var sum int
+        var count int
+        for _, sm := range student.SubjectMarks {
+                v, err := strconv.Atoi(sm.ShortName)
+                if err == nil && v > 0 {
+                        sum += v
+                        count++
+                }
+        }
+        if count > 0 {
+                student.AverageScore = fmt.Sprintf("%.1f", float64(sum)/float64(count))
+        } else {
+                student.AverageScore = ""
+        }
+
+        // Refresh the table immediately (optimistic update)
+        d.gradesTable.Refresh()
+
+        // Then reload from server in background for accuracy
+        go d.loadData()
 }
 
 // ------------------------------------------
@@ -742,7 +926,89 @@ func (d *Dashboard) showEditGradePopup(studentIdx, dateIdx int) {
                                 } else {
                                         d.statusLabel.SetText(fmt.Sprintf("Оценка %d: %s %s — %s",
                                                 grade, student.LastName, student.FirstName, date.AssignmentDate[5:]))
-                                        go d.loadData()
+                                        // Optimistic local update + async average recalculation
+                                        d.updateStudentLocal(studentIdx, dateIdx, grade)
+                                }
+                        })
+                }()
+        }, d.controller.GetWindow())
+}
+
+// ------------------------------------------
+// QUICK GRADE POPUP — type a digit on selected cell
+// ------------------------------------------
+
+// showQuickGradePopup shows a small dialog when the user types a digit (2-9)
+// on a selected grade cell. The grade entry is pre-filled with the typed digit,
+// and the user can confirm, change, or cancel.
+func (d *Dashboard) showQuickGradePopup(studentIdx, dateIdx, prefill int) {
+        student := d.students[studentIdx]
+        date := d.dates[dateIdx]
+
+        // Find current mark
+        var currentMark string
+        for _, sm := range student.SubjectMarks {
+                if sm.AssignmentDateID == date.AssignmentDateID {
+                        currentMark = sm.ShortName
+                        break
+                }
+        }
+
+        gradeEntry := widget.NewEntry()
+        gradeEntry.SetPlaceHolder("2-10")
+        gradeEntry.SetText(strconv.Itoa(prefill))
+
+        header := fmt.Sprintf("%s %s — %s (%s)",
+                student.LastName, student.FirstName,
+                date.WeekdayShortName, date.AssignmentDate[5:])
+
+        currentInfo := ""
+        if currentMark != "" && currentMark != "—" {
+                currentInfo = fmt.Sprintf("Текущая оценка: %s", currentMark)
+        } else {
+                currentInfo = "Ячейка пуста — новая оценка"
+        }
+
+        content := container.NewVBox(
+                widget.NewLabelWithStyle(header, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+                widget.NewLabel(currentInfo),
+                widget.NewSeparator(),
+                container.NewGridWithColumns(2,
+                        widget.NewLabel("Оценка (2-10):"),
+                        gradeEntry,
+                ),
+        )
+
+        dialog.ShowForm("Оценка", "Сохранить", "Отмена", []*widget.FormItem{
+                widget.NewFormItem("", content),
+        }, func(ok bool) {
+                if !ok {
+                        return
+                }
+                gradeStr := gradeEntry.Text
+                if gradeStr == "" {
+                        return
+                }
+                grade, err := strconv.Atoi(gradeStr)
+                if err != nil || grade < 2 || grade > 10 {
+                        dialog.ShowError(fmt.Errorf("Оценка от 2 до 10"), d.controller.GetWindow())
+                        return
+                }
+
+                go func() {
+                        err := d.controller.GetClient().CreateMark(
+                                student.StudentID,
+                                date.AssignmentDateID,
+                                d.selectedQuarter.ID,
+                                grade,
+                        )
+                        fyne.Do(func() {
+                                if err != nil {
+                                        dialog.ShowError(fmt.Errorf("Ошибка: %v", err), d.controller.GetWindow())
+                                } else {
+                                        d.statusLabel.SetText(fmt.Sprintf("Оценка %d: %s %s — %s",
+                                                grade, student.LastName, student.FirstName, date.AssignmentDate[5:]))
+                                        d.updateStudentLocal(studentIdx, dateIdx, grade)
                                 }
                         })
                 }()
