@@ -1,142 +1,182 @@
 package ui
 
 import (
-	"context"
-	"edonish-app/client"
-	"errors"
-	"time"
+	"fmt"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/4codegit/edonish-auto/client"
 )
 
-// LoginScreen - экран авторизации
-type LoginScreen struct {
-	app      fyne.App
-	window   fyne.Window
-	client   *client.EdonishClient
-	username *widget.Entry
-	password *widget.Entry
-	onLogin  func()
+// Controller interface provides access to the client, window, and logout.
+type Controller interface {
+	GetClient() *client.EdonishClient
+	GetWindow() fyne.Window
+	Logout()
 }
 
-// NewLoginScreen создаёт новый экран авторизации
-func NewLoginScreen(app fyne.App, win fyne.Window, cli *client.EdonishClient) *LoginScreen {
-	return &LoginScreen{
-		app:    app,
-		window: win,
-		client: cli,
-	}
+// LoginForm is the login screen with school/username/password fields.
+type LoginForm struct {
+	controller Controller
+	container  *fyne.Container
+	loginEntry *widget.Entry
+	passEntry  *widget.Entry
+	schoolSel  *widget.Select
+	loginBtn   *widget.Button
 }
 
-// SetOnLogin устанавливает коллбек для успешного входа
-func (s *LoginScreen) SetOnLogin(callback func()) {
-	s.onLogin = callback
-}
+// NewLoginForm creates a new login form.
+func NewLoginForm(ctrl Controller) *LoginForm {
+	lf := &LoginForm{controller: ctrl}
 
-// Show отображает экран авторизации
-func (s *LoginScreen) Show() {
-	// Создаём поля ввода
-	s.username = widget.NewEntry()
-	s.username.SetPlaceHolder("Логин")
-	s.username.SetFocus(true)
+	// Title
+	titleText := canvas.NewText("eDonish Auto v5.5", theme.Color(theme.ColorNameForeground))
+	titleText.TextStyle = fyne.TextStyle{Bold: true}
+	titleText.TextSize = 28
 
-	s.password = widget.NewPasswordEntry()
-	s.password.SetPlaceHolder("Пароль")
+	// Subtitle
+	subtitleText := canvas.NewText("Автоматизация электронного журнала edonish.tj", theme.Color(theme.ColorNameForeground))
+	subtitleText.TextSize = 14
 
-	// Создаём кнопку входа
-	loginBtn := widget.NewButton("Войти", func() {
-		s.performLogin()
-	})
+	// Login entry
+	lf.loginEntry = widget.NewEntry()
+	lf.loginEntry.SetPlaceHolder("Введите логин")
 
-	// Добавляем возможность входа по Enter
-	s.username.OnSubmitted = func(string) {
-		s.password.Focus()
+	// Password entry
+	lf.passEntry = widget.NewPasswordEntry()
+	lf.passEntry.SetPlaceHolder("Введите пароль")
+
+	// Login button
+	lf.loginBtn = widget.NewButton("Войти", lf.onLogin)
+	lf.loginBtn.Importance = widget.HighImportance
+
+	// School selector (hidden until login succeeds)
+	lf.schoolSel = widget.NewSelect([]string{}, lf.onSchoolSelected)
+	lf.schoolSel.PlaceHolder = "Выберите школу/роль..."
+
+	// Handle Enter key in entries
+	lf.loginEntry.OnSubmitted = func(_ string) {
+		lf.passEntry.FocusGained()
 	}
-	s.password.OnSubmitted = func(string) {
-		loginBtn.OnTapped()
+	lf.passEntry.OnSubmitted = func(_ string) {
+		lf.loginBtn.OnTapped()
 	}
 
-	// Создаём форму
+	// Build form
 	form := container.NewVBox(
-		widget.NewLabel("Авторизация в Edonish"),
+		layout.NewSpacer(),
+		container.NewHBox(layout.NewSpacer(), titleText, layout.NewSpacer()),
+		container.NewHBox(layout.NewSpacer(), subtitleText, layout.NewSpacer()),
 		widget.NewSeparator(),
 		widget.NewForm(
-			widget.NewFormItem("Логин", s.username),
-			widget.NewFormItem("Пароль", s.password),
+			&widget.FormItem{Text: "Логин", Widget: lf.loginEntry},
+			&widget.FormItem{Text: "Пароль", Widget: lf.passEntry},
 		),
-		widget.NewSeparator(),
-		loginBtn,
+		lf.loginBtn,
+		lf.schoolSel,
+		layout.NewSpacer(),
 	)
 
-	// Центрируем контент
-	content := container.NewCenter(form)
+	lf.container = container.NewPadded(
+		container.NewCenter(
+			container.NewVBox(
+				container.NewHBox(layout.NewSpacer(), form, layout.NewSpacer()),
+			),
+		),
+	)
 
-	// Устанавливаем содержимое окна
-	s.window.SetContent(content)
-	s.window.Resize(fyne.NewSize(400, 300))
-	s.window.Show()
+	return lf
 }
 
-// performLogin выполняет процесс авторизации
-func (s *LoginScreen) performLogin() {
-	username := s.username.Text
-	password := s.password.Text
+// Container returns the root container.
+func (lf *LoginForm) Container() fyne.CanvasObject {
+	return lf.container
+}
 
-	// Валидация
-	if username == "" || password == "" {
-		dialog.ShowInformation("Ошибка", "Пожалуйста, заполните все поля", s.window)
+// GetLoginEntry returns the login entry widget for focus.
+func (lf *LoginForm) GetLoginEntry() *widget.Entry {
+	return lf.loginEntry
+}
+
+// onLogin handles the login button press.
+func (lf *LoginForm) onLogin() {
+	login := lf.loginEntry.Text
+	password := lf.passEntry.Text
+
+	if login == "" || password == "" {
+		dialog.ShowInformation("Ошибка", "Введите логин и пароль", lf.controller.GetWindow())
 		return
 	}
 
-	// Блокируем интерфейс во время запроса
-	disableForm(s.username, s.password)
+	lf.loginBtn.Disable()
+	lf.loginBtn.SetText("Вход...")
 
-	// Выполняем вход в отдельной горутине
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		resp, err := s.client.Login(ctx, username, password)
-		
-		// Возвращаем UI в исходное состояние
+		err := lf.controller.GetClient().Login(login, password)
 		fyne.Do(func() {
-			enableForm(s.username, s.password)
+			lf.loginBtn.Enable()
+			lf.loginBtn.SetText("Войти")
 
 			if err != nil {
-				// Показываем ошибку
-				var loginErr *client.LoginError
-				if errors.As(err, &loginErr) {
-					dialog.ShowError("Ошибка авторизации", err, s.window)
-				} else {
-					dialog.ShowError("Ошибка соединения", err, s.window)
-				}
+				dialog.ShowError(err, lf.controller.GetWindow())
 				return
 			}
 
-			if !resp.Success {
-				dialog.ShowInformation("Ошибка", resp.Message, s.window)
+			// Fetch schools/roles
+			err = lf.controller.GetClient().FetchHeaderInfo()
+			if err != nil {
+				dialog.ShowError(err, lf.controller.GetWindow())
 				return
 			}
 
-			// Успешный вход
-			if s.onLogin != nil {
-				s.onLogin()
+			// Show school selector
+			schoolNames := make([]string, len(lf.controller.GetClient().Schools))
+			for i, school := range lf.controller.GetClient().Schools {
+				schoolNames[i] = fmt.Sprintf("%s (%s)", school.SchoolName, school.Name)
+			}
+			lf.schoolSel.Options = schoolNames
+			lf.schoolSel.Refresh()
+
+			// Auto-select if only one school
+			if len(lf.controller.GetClient().Schools) == 1 {
+				lf.schoolSel.SetSelectedIndex(0)
 			}
 		})
 	}()
 }
 
-// disableForm блокирует поля ввода
-func disableForm(username, password *widget.Entry) {
-	username.Disable()
-	password.Disable()
-}
+// onSchoolSelected handles school selection and navigates to dashboard.
+func (lf *LoginForm) onSchoolSelected(selected string) {
+	if selected == "" {
+		return
+	}
 
-// enableForm разблокирует поля ввода
-func enableForm(username, password *widget.Entry) {
-	username.Enable()
-	password.Enable()
+	idx := -1
+	for i, opt := range lf.schoolSel.Options {
+		if opt == selected {
+			idx = i
+			break
+		}
+	}
+
+	if idx < 0 || idx >= len(lf.controller.GetClient().Schools) {
+		return
+	}
+
+	school := lf.controller.GetClient().Schools[idx]
+	err := lf.controller.GetClient().SelectSchool(school.SchoolID)
+	if err != nil {
+		dialog.ShowError(err, lf.controller.GetWindow())
+		return
+	}
+
+	// Navigate to dashboard
+	if dash, ok := lf.controller.(interface{ ShowDashboard() }); ok {
+		dash.ShowDashboard()
+	}
 }
