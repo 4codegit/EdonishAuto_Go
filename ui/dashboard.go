@@ -64,7 +64,6 @@ type Dashboard struct {
 
         // Journal selection state
         selectedCell *widget.TableCellID
-        deleteBtn    *widget.Button
 
         // Tab objects
         topicsTab      *TopicsTab
@@ -190,19 +189,12 @@ func (d *Dashboard) buildFilters() *fyne.Container {
         })
         d.refreshBtn.Disable()
 
-        d.deleteBtn = widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
-                d.deleteSelectedCell()
-        })
-        d.deleteBtn.Importance = widget.DangerImportance
-        d.deleteBtn.Disable()
-
         return container.NewHBox(
                 widget.NewLabel("Фильтры:"),
                 d.classSel,
                 d.subjectSel,
                 d.quarterSel,
                 d.refreshBtn,
-                d.deleteBtn,
         )
 }
 
@@ -564,13 +556,6 @@ func (d *Dashboard) rebuildGradesTable() {
                 // Track selected cell
                 d.selectedCell = &id
 
-                // Enable delete button if a grade cell is selected
-                if id.Row > 0 && id.Col >= 2 && id.Col < totalCols-1 {
-                        d.deleteBtn.Enable()
-                } else {
-                        d.deleteBtn.Disable()
-                }
-
                 // Detect double-click
                 if id == lastCellID {
                         clickCount++
@@ -618,9 +603,8 @@ func (d *Dashboard) rebuildGradesTable() {
 // KEYBOARD HANDLER — Arrow keys + Delete key
 // ------------------------------------------
 
-// installKeyboardHandler sets up arrow key navigation and Delete key on the
-// window's canvas so that the user can move between journal cells and delete
-// grades without reaching for the mouse.
+// installKeyboardHandler sets up arrow key navigation on the window's canvas
+// so that the user can move between journal cells with keyboard.
 func (d *Dashboard) installKeyboardHandler() {
         w := d.controller.GetWindow()
         if w == nil {
@@ -647,7 +631,7 @@ func (d *Dashboard) installKeyboardHandler() {
                 case fyne.KeyRight:
                         d.navigateCell(1, 0)
                 case fyne.KeyDelete:
-                        d.deleteSelectedCell()
+                        d.navigateCell(0, 1) // Delete → move down like Tab
                 }
         })
 }
@@ -668,7 +652,6 @@ func (d *Dashboard) navigateCell(dCol, dRow int) {
                 start := widget.TableCellID{Row: 1, Col: 2}
                 d.selectedCell = &start
                 d.gradesTable.Select(start)
-                d.deleteBtn.Enable()
                 return
         }
 
@@ -692,80 +675,6 @@ func (d *Dashboard) navigateCell(dCol, dRow int) {
         newID := widget.TableCellID{Row: newRow, Col: newCol}
         d.selectedCell = &newID
         d.gradesTable.Select(newID)
-
-        // Enable/disable delete button based on whether it's a grade cell
-        if newRow > 0 && newCol >= 2 && newCol < totalCols-1 {
-                d.deleteBtn.Enable()
-        } else {
-                d.deleteBtn.Disable()
-        }
-}
-
-// ------------------------------------------
-// DELETE SELECTED CELL
-// ------------------------------------------
-
-func (d *Dashboard) deleteSelectedCell() {
-        if d.selectedCell == nil || d.students == nil || d.dates == nil {
-                return
-        }
-
-        id := *d.selectedCell
-        numDateCols := len(d.dates)
-        totalCols := 2 + numDateCols + 1
-
-        // Only grade cells (date columns)
-        if id.Row <= 0 || id.Col < 2 || id.Col >= totalCols-1 {
-                return
-        }
-
-        studentIdx := id.Row - 1
-        dateIdx := id.Col - 2
-
-        if studentIdx >= len(d.students) || dateIdx >= len(d.dates) {
-                return
-        }
-
-        student := d.students[studentIdx]
-        date := d.dates[dateIdx]
-
-        // Find the mark ID for this cell
-        var markID string
-        for _, sm := range student.SubjectMarks {
-                if sm.AssignmentDateID == date.AssignmentDateID {
-                        if sm.AssignmentMarkID != "" {
-                                markID = sm.AssignmentMarkID
-                        }
-                        break
-                }
-        }
-
-        if markID == "" {
-                d.statusLabel.SetText("Ячейка пуста — нечего удалять")
-                return
-        }
-
-        confirmMsg := fmt.Sprintf("Удалить оценку %s для %s %s — %s?",
-                student.SubjectMarks[0].ShortName, student.LastName, student.FirstName,
-                date.AssignmentDate[5:])
-
-        dialog.ShowConfirm("Удалить оценку", confirmMsg, func(ok bool) {
-                if !ok {
-                        return
-                }
-                go func() {
-                        err := d.controller.GetClient().DeleteMark(markID)
-                        fyne.Do(func() {
-                                if err != nil {
-                                        dialog.ShowError(fmt.Errorf("Ошибка удаления: %v", err), d.controller.GetWindow())
-                                } else {
-                                        d.statusLabel.SetText(fmt.Sprintf("Оценка удалена: %s %s — %s",
-                                                student.LastName, student.FirstName, date.AssignmentDate[5:]))
-                                        go d.loadData()
-                                }
-                        })
-                }()
-        }, d.controller.GetWindow())
 }
 
 // ------------------------------------------
