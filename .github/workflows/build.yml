@@ -166,12 +166,13 @@ jobs:
           # Build APK using fyne package
           fyne package -os android -appID com.edonish.auto -name edonish-auto -icon Icon.png 2>&1
           
-          # Check result
-          ls -la *.apk 2>/dev/null || echo "No APK found, checking other locations..."
-          find . -name "*.apk" 2>/dev/null
+          # Check result - Fyne replaces hyphens with underscores in APK name
+          ls -la *.apk 2>/dev/null || echo "No APK found in current dir"
+          find . -maxdepth 2 -name "*.apk" 2>/dev/null
           
-          if [ -f "edonish-auto.apk" ]; then
-            mv edonish-auto.apk edonish-auto-${{ steps.version.outputs.VERSION }}-android.apk
+          APK_FILE=$(find . -maxdepth 2 -name '*.apk' | head -1)
+          if [ -n "$APK_FILE" ]; then
+            mv "$APK_FILE" edonish-auto-${{ steps.version.outputs.VERSION }}-android.apk
             echo "APK built successfully!"
             ls -la edonish-auto-*.apk
           else
