@@ -123,17 +123,15 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android NDK
+      - name: Install Android NDK & Build tools
         run: |
-          sdkmanager --install "ndk;26.1.10909125"
+          sdkmanager --install "ndk;26.1.10909125" "build-tools;34.0.0" "platforms;android-34"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
 
-      - name: Install gomobile
+      - name: Install Fyne CLI
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          go install golang.org/x/mobile/cmd/gobind@latest
-          export PATH=$PATH:$(go env GOPATH)/bin
-          gomobile init
+          go install fyne.io/fyne/v2/cmd/fyne@latest
+          echo "PATH=$PATH:$(go env GOPATH)/bin" >> $GITHUB_ENV
 
       - name: Get version
         id: version
@@ -150,56 +148,34 @@ jobs:
         run: GONOSUMCHECK=* GOFLAGS=-insecure go mod tidy
         shell: bash
 
-      - name: Build Android APK with gomobile
+      - name: Build Android APK
         run: |
-          export PATH=$PATH:$(go env GOPATH)/bin
+          set -x
           export ANDROID_HOME=$ANDROID_HOME
           export ANDROID_NDK_HOME=$ANDROID_NDK_HOME
-          gomobile bind -target=android -androidapi=21 -o edonish-auto-${{ steps.version.outputs.VERSION }}-android.aar . 2>&1 || true
-          # Alternative: use fyne package with the new tool
-          go install fyne.io/tools/cmd/fyne@latest 2>/dev/null || true
-          export PATH=$PATH:$(go env GOPATH)/bin
-          # Try building with gomobile directly
-          cd /tmp
-          mkdir -p apk-project
-          cd apk-project
-          go mod init edonish-auto
-          # Create a minimal Android entry point
-          cat > main.go << 'GOEOF'
-          package main
-
-          import (
-            "os"
-            "runtime"
-
-            "fyne.io/fyne/v2/app"
-          )
-
-          func main() {
-            if runtime.GOOS == "windows" && os.Getenv("FYNE_RENDER") == "" {
-              os.Setenv("FYNE_RENDER", "software")
-            }
-            a := app.New()
-            a.Run()
-          }
-          GOEOF
-          # This approach won't work easily - Fyne Android needs special build
-          # Let's use the standard gomobile build approach instead
-          echo "APK_BUILD_ATTEMPTED=true" >> $GITHUB_ENV
-
-      - name: Build Android APK with Fyne
-        run: |
-          export PATH=$PATH:$(go env GOPATH)/bin
-          cd $GITHUB_WORKSPACE
-          # Use fyne package (try both old and new tool)
-          fyne package -os android -appID com.edonish.auto -name edonish-auto -icon Icon.png 2>&1 || \
-          fyne package -os android -appID com.edonish.auto -icon Icon.png 2>&1 || \
-          echo "FYNE_ANDROID_FAILED=true" >> $GITHUB_ENV
+          
+          # Fyne requires gomobile for Android builds
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          gomobile init
+          
+          # Add golang.org/x/mobile to go.mod
+          go get golang.org/x/mobile
+          go mod tidy
+          
+          # Build APK using fyne package
+          fyne package -os android -appID com.edonish.auto -name edonish-auto -icon Icon.png 2>&1
+          
+          # Check result
+          ls -la *.apk 2>/dev/null || echo "No APK found, checking other locations..."
+          find . -name "*.apk" 2>/dev/null
+          
           if [ -f "edonish-auto.apk" ]; then
             mv edonish-auto.apk edonish-auto-${{ steps.version.outputs.VERSION }}-android.apk
-            echo "APK built successfully"
+            echo "APK built successfully!"
+            ls -la edonish-auto-*.apk
           else
-            echo "APK build failed - will continue without APK"
+            echo "APK build failed"
           fi
 
       - name: Upload APK artifact
@@ -311,7 +287,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
-      - name: Download all artifacts (including optional android)
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
@@ -323,19 +299,15 @@ jobs:
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           cd dist
-          # Rename Linux binary
           if [ -f edonish-auto-linux-amd64/edonish-auto ]; then
             mv edonish-auto-linux-amd64/edonish-auto edonish-auto-linux-amd64/edonish-auto-${VERSION}-linux-amd64
           fi
-          # Rename macOS binary
           if [ -f edonish-auto-macos-amd64/edonish-auto-mac ]; then
             mv edonish-auto-macos-amd64/edonish-auto-mac edonish-auto-macos-amd64/edonish-auto-${VERSION}-macos-amd64
           fi
-          # Rename Windows exe
           if [ -f edonish-auto-windows-amd64/edonish-auto.exe ]; then
             mv edonish-auto-windows-amd64/edonish-auto.exe edonish-auto-windows-amd64/edonish-auto-${VERSION}-windows-amd64.exe
           fi
-          # Rename Windows portable
           if [ -f edonish-auto-windows-portable/edonish-auto-windows-portable.zip ]; then
             mv edonish-auto-windows-portable/edonish-auto-windows-portable.zip edonish-auto-windows-portable/edonish-auto-${VERSION}-windows-portable.zip
           fi
@@ -350,7 +322,6 @@ jobs:
           TAG=${GITHUB_REF}
           REPO="${{ github.repository }}"
 
-          # Check for APK
           HAS_APK="нет"
           if find dist -name "*.apk" | grep -q .; then
             HAS_APK="да"
@@ -372,7 +343,6 @@ jobs:
           - **Android**: установите .apk на устройство
           "
 
-          # Create the release
           curl -s -X POST \
             -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
@@ -396,7 +366,6 @@ jobs:
 
           UPLOAD_URL="https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets"
 
-          # Upload all files
           find dist -type f | while read file; do
             filename=$(basename "$file")
             echo "Uploading: $filename"
