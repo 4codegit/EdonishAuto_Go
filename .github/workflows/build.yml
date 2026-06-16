@@ -84,7 +84,6 @@ jobs:
 
           New-Item -ItemType Directory -Force -Path windows-portable | Out-Null
           Copy-Item ${{ matrix.output }} windows-portable\
-          # Copy available Mesa DLLs (libglapi.dll was merged into opengl32.dll in Mesa 26+)
           $mesaDlls = @('opengl32.dll', 'libgallium_wgl.dll')
           foreach ($dll in $mesaDlls) {
             if (Test-Path "mesa\x64\$dll") {
@@ -108,6 +107,62 @@ jobs:
         with:
           name: edonish-auto-windows-portable
           path: edonish-auto-windows-portable.zip
+
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libgl1-mesa-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxxf86vm-dev libglu1-mesa-dev
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager --install "ndk;26.1.10909125"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
+
+      - name: Install Fyne CLI
+        run: go install fyne.io/fyne/v2/cmd/fyne@latest
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(grep 'Version = ' FyneApp.toml | awk -F'"' '{print $2}')
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Download dependencies
+        run: GONOSUMCHECK=* GOFLAGS=-insecure go mod tidy
+        shell: bash
+
+      - name: Build Android APK
+        env:
+          CGO_ENABLED: 1
+        run: |
+          export PATH=$PATH:$(go env GOPATH)/bin
+          fyne package -os android -appID com.edonish.auto -name edonish-auto -icon Icon.png
+          mv edonish-auto.apk edonish-auto-${{ steps.version.outputs.VERSION }}-android.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edonish-auto-android-apk
+          path: edonish-auto-*.apk
 
   package-deb:
     runs-on: ubuntu-latest
@@ -206,7 +261,7 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
-    needs: [build, package-deb, package-rpm]
+    needs: [build, build-android, package-deb, package-rpm]
     if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
@@ -218,9 +273,88 @@ jobs:
       - name: List release files
         run: find dist -type f | sort
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/**/*
-          generate_release_notes: true
-          draft: false
+      - name: Rename files with version suffix
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          cd dist
+          # Rename Linux binary
+          if [ -f edonish-auto-linux-amd64/edonish-auto ]; then
+            mv edonish-auto-linux-amd64/edonish-auto edonish-auto-linux-amd64/edonish-auto-${VERSION}-linux-amd64
+          fi
+          # Rename macOS binary
+          if [ -f edonish-auto-macos-amd64/edonish-auto-mac ]; then
+            mv edonish-auto-macos-amd64/edonish-auto-mac edonish-auto-macos-amd64/edonish-auto-${VERSION}-macos-amd64
+          fi
+          # Rename Windows exe
+          if [ -f edonish-auto-windows-amd64/edonish-auto.exe ]; then
+            mv edonish-auto-windows-amd64/edonish-auto.exe edonish-auto-windows-amd64/edonish-auto-${VERSION}-windows-amd64.exe
+          fi
+          # Rename Windows portable
+          if [ -f edonish-auto-windows-portable/edonish-auto-windows-portable.zip ]; then
+            mv edonish-auto-windows-portable/edonish-auto-windows-portable.zip edonish-auto-windows-portable/edonish-auto-${VERSION}-windows-portable.zip
+          fi
+          echo "Final files:"
+          find . -type f | sort
+
+      - name: Create GitHub Release with API
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          TAG=${GITHUB_REF}
+          REPO="${{ github.repository }}"
+
+          RELEASE_BODY="## eDonish Auto v${VERSION}
+
+          ### Платформы:
+          - **Linux**: бинарник (x86_64) + .deb + .rpm
+          - **Windows**: .exe + portable.zip (с Mesa OpenGL DLL)
+          - **macOS**: бинарник (x86_64)
+          - **Android**: .apk
+
+          ### Установка:
+          - **Linux (DEB)**: \`sudo dpkg -i edonish-auto_${VERSION}_amd64.deb\`
+          - **Linux (RPM)**: \`sudo rpm -i edonish-auto_${VERSION}_x86_64.rpm\`
+          - **Windows**: скачайте .exe или portable.zip
+          - **macOS**: \`chmod +x edonish-auto-mac && ./edonish-auto-mac\`
+          - **Android**: установите .apk на устройство
+          "
+
+          # Create the release
+          curl -s -X POST \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/releases" \
+            -d "{
+              \"tag_name\": \"$TAG\",
+              \"name\": \"Release v${VERSION}\",
+              \"body\": $(echo "$RELEASE_BODY" | jq -Rs .),
+              \"draft\": false,
+              \"prerelease\": false
+            }" > /tmp/release_response.json
+
+          RELEASE_ID=$(jq -r '.id' /tmp/release_response.json)
+          echo "Created release ID: $RELEASE_ID"
+
+          if [ "$RELEASE_ID" = "null" ] || [ -z "$RELEASE_ID" ]; then
+            echo "ERROR: Failed to create release"
+            cat /tmp/release_response.json
+            exit 1
+          fi
+
+          UPLOAD_URL="https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets"
+
+          # Upload all files
+          find dist -type f | while read file; do
+            filename=$(basename "$file")
+            echo "Uploading: $filename"
+            curl -s -X POST \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$file" \
+              "$UPLOAD_URL?name=$filename"
+            echo ""
+          done
+
+          echo "Release created: https://github.com/$REPO/releases/tag/$TAG"
